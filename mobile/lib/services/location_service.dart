@@ -54,7 +54,8 @@ class LocationService {
     required double longitude,
   }) async {
     try {
-      final placemarks = await placemarkFromCoordinates(
+      final geocoding = Geocoding();
+      final placemarks = await geocoding.placemarkFromCoordinates(
         latitude,
         longitude,
       );
