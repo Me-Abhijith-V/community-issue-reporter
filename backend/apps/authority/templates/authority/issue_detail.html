@@ -1,0 +1,467 @@
+{% extends "authority/base.html" %}
+{% load authority_tags %}
+{% block title %}Issue #{{ issue.id }}{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<style>
+    #detail-map { height: 260px; border-radius: 8px; border: 1px solid var(--border); margin-top: 12px; }
+
+    /* Status timeline */
+    .timeline { display: flex; flex-direction: column; gap: 0; }
+    .tl-item { display: flex; gap: 14px; position: relative; }
+    .tl-item:not(:last-child)::before {
+        content: '';
+        position: absolute;
+        left: 15px;
+        top: 32px;
+        bottom: -6px;
+        width: 2px;
+        background: var(--border);
+    }
+    .tl-dot {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 13px;
+        font-weight: 700;
+        border: 2px solid var(--border);
+        background: var(--surface2);
+        z-index: 1;
+        margin-top: 2px;
+    }
+    .tl-dot.reported    { background: rgba(245,158,11,.2); border-color:#fbbf24; color:#fbbf24; }
+    .tl-dot.in_progress { background: rgba(59,130,246,.2);  border-color:#60a5fa; color:#60a5fa; }
+    .tl-dot.resolved    { background: rgba(34,197,94,.2);   border-color:#4ade80; color:#4ade80; }
+    .tl-dot.closed      { background: rgba(100,116,139,.2); border-color:#94a3b8; color:#94a3b8; }
+    .tl-dot.invalid     { background: rgba(245,158,11,.2); border-color:#fbbf24; color:#fbbf24; }
+    .tl-dot.fake        { background: rgba(239,68,68,.2);   border-color:#f87171; color:#f87171; }
+
+    .tl-body { padding-bottom: 18px; flex: 1; }
+    .tl-header { display: flex; justify-content: space-between; align-items: flex-start; }
+    .tl-title  { font-size: 13px; font-weight: 600; color: var(--text); }
+    .tl-meta   { font-size: 11px; color: var(--text2); white-space: nowrap; margin-left: 12px; }
+    .tl-sub    { font-size: 12px; color: var(--text2); margin-top: 2px; }
+    .tl-note   { font-size: 13px; color: var(--text); margin-top: 6px;
+                 background: var(--surface2); border-radius: 6px; padding: 8px 10px; }
+
+    /* Notification sent indicator */
+    .notif-badge {
+        display: inline-flex; align-items: center; gap: 4px;
+        font-size: 11px; font-weight: 600; padding: 2px 7px;
+        border-radius: 999px; background: rgba(56,189,248,.12);
+        color: #38bdf8; border: 1px solid rgba(56,189,248,.3);
+        margin-left: 6px; vertical-align: middle;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+
+{# ── PAGE HEADER ── #}
+<div class="page-header" style="display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:12px">
+    <div>
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:6px">
+            <h1 style="font-size:24px">Issue #{{ issue.id }}</h1>
+            <span class="badge badge-{{ issue.status }}" style="font-size:13px; padding:5px 12px">{{ issue.status|capfirst }}</span>
+            {% if issue.ai_severity %}
+            <span class="badge badge-{{ issue.ai_severity }}" style="font-size:13px; padding:5px 12px">⚠ {{ issue.ai_severity|capfirst }}</span>
+            {% endif %}
+            {% with cnt=issue.duplicate_issues.count %}
+            {% if cnt > 0 %}
+            <span class="badge badge-duplicate" style="font-size:13px; padding:5px 12px">🔁 {{ cnt }} linked report{{ cnt|pluralize }}</span>
+            {% endif %}
+            {% endwith %}
+        </div>
+        <p style="font-size:13px; color:var(--text2)">
+            Reported {{ issue.created_at|date:"d F Y, H:i" }}
+            {% if issue.updated_at != issue.created_at %} · Updated {{ issue.updated_at|date:"d F Y, H:i" }}{% endif %}
+        </p>
+    </div>
+    <a href="{% url 'authority:issues' %}" class="btn btn-ghost" style="font-size:12px">← Back to Issues</a>
+</div>
+
+{# ── DUPLICATE WARNING ── #}
+{% if issue.ai_is_duplicate %}
+<div class="duplicate-alert" style="margin-bottom:18px; display:flex; align-items:flex-start; gap:10px">
+    <span style="font-size:20px">🔁</span>
+    <div>
+        <strong>AI: This report is a duplicate</strong><br>
+        <span>Likely a duplicate of
+        {% if issue.ai_duplicate_of %}
+        <a href="{% url 'authority:issue-detail' issue.ai_duplicate_of.id %}" style="color:#a78bfa; font-weight:700">Issue #{{ issue.ai_duplicate_of.id }}</a>
+        ({{ issue.ai_duplicate_of.category|capfirst }} — {{ issue.ai_duplicate_of.status|capfirst }})
+        {% else %}an existing issue (ID not stored).{% endif %}
+        </span>
+    </div>
+</div>
+{% endif %}
+
+{# ── AI ANALYSIS ── #}
+{% if issue.ai_suggested_category or issue.ai_severity or issue.ai_is_duplicate is not None %}
+<div class="ai-block" style="margin-bottom:18px">
+    <div class="ai-block-title">✨ AI Analysis</div>
+    <div class="ai-row">
+        {% if issue.ai_suggested_category %}
+        <div><span>AI Category: </span><strong>{{ issue.ai_suggested_category|capfirst }}</strong></div>
+        {% endif %}
+        {% if issue.ai_severity %}
+        <div><span>Severity: </span><strong><span class="badge badge-{{ issue.ai_severity }}">{{ issue.ai_severity|capfirst }}</span></strong></div>
+        {% endif %}
+        {% if issue.detected_language %}
+        <div><span>Language: </span><strong>{{ issue.detected_language|upper }}</strong></div>
+        {% endif %}
+        {% if issue.ai_is_duplicate is not None %}
+        <div><span>Duplicate: </span>
+            {% if issue.ai_is_duplicate %}
+            <strong style="color:#c084fc">Yes{% if issue.ai_duplicate_of %} →
+                <a href="{% url 'authority:issue-detail' issue.ai_duplicate_of.id %}" style="color:#a78bfa">#{{ issue.ai_duplicate_of.id }}</a>
+            {% endif %}</strong>
+            {% else %}<strong style="color:#4ade80">No (Unique)</strong>{% endif %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+{# ── LINKED DUPLICATES TABLE ── #}
+{% with duplicates=issue.duplicate_issues.all %}
+{% if duplicates %}
+<div class="card" style="margin-bottom:18px; border-color:rgba(139,92,246,.35)">
+    <div style="font-size:14px; font-weight:700; color:#c084fc; margin-bottom:12px">
+        🔁 {{ duplicates|length }} report{{ duplicates|length|pluralize }} grouped under this canonical issue
+    </div>
+    <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr><th>Issue #</th><th>Description</th><th>Reporter</th><th>Date</th><th>Upvotes</th></tr>
+            </thead>
+            <tbody>
+                {% for dup in duplicates %}
+                <tr>
+                    <td><a href="{% url 'authority:issue-detail' dup.id %}">#{{ dup.id }}</a></td>
+                    <td style="max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">
+                        {{ dup.translated_description|default:dup.original_description|truncatechars:80 }}
+                    </td>
+                    <td>{{ dup.reported_by.full_name }}</td>
+                    <td style="color:var(--text2); font-size:12px">{{ dup.created_at|date:"d M Y" }}</td>
+                    <td style="text-align:center">{{ dup.upvote_count }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+{% endwith %}
+
+{# ── TWO-COLUMN LAYOUT ── #}
+<div style="display:grid; grid-template-columns:1fr 380px; gap:20px; align-items:start">
+
+    {# ══════ LEFT COLUMN ══════ #}
+    <div>
+
+        {# Photo #}
+        {% if issue.photo %}
+        <div style="margin-bottom:18px">
+            <img src="{{ issue.photo.url }}" alt="Issue photo"
+                 style="width:100%; max-height:380px; object-fit:cover; border-radius:var(--radius); border:1px solid var(--border)">
+        </div>
+        {% endif %}
+
+        {# Descriptions #}
+        <div class="card" style="margin-bottom:18px">
+            <h3 style="font-size:13px; font-weight:700; margin-bottom:12px; color:var(--text2); text-transform:uppercase; letter-spacing:.5px">📝 Description</h3>
+            {% if issue.translated_description %}
+            <div style="margin-bottom:14px">
+                <div style="font-size:11px; color:var(--text2); font-weight:600; text-transform:uppercase; letter-spacing:.5px; margin-bottom:4px">English (AI Translated)</div>
+                <p style="font-size:15px; line-height:1.65">{{ issue.translated_description }}</p>
+            </div>
+            {% endif %}
+            {% if issue.original_description and issue.original_description != issue.translated_description %}
+            <div>
+                <div style="font-size:11px; color:var(--text2); font-weight:600; text-transform:uppercase; letter-spacing:.5px; margin-bottom:4px">Original ({{ issue.detected_language|default:"unknown"|upper }})</div>
+                <p style="font-size:14px; color:var(--text2); line-height:1.65">{{ issue.original_description }}</p>
+            </div>
+            {% elif issue.original_description %}
+            <p style="font-size:15px; line-height:1.65">{{ issue.original_description }}</p>
+            {% endif %}
+        </div>
+
+        {# Location + mini-map #}
+        <div class="card" style="margin-bottom:18px">
+            <h3 style="font-size:13px; font-weight:700; margin-bottom:10px; color:var(--text2); text-transform:uppercase; letter-spacing:.5px">📍 Location</h3>
+
+            {% if geocoded_address %}
+            <div style="font-size:15px; font-weight:600; margin-bottom:6px">{{ geocoded_address }}</div>
+            {% endif %}
+
+            <div style="font-size:12px; color:var(--text2); margin-bottom:12px">
+                {{ issue.latitude }}, {{ issue.longitude }}
+                <a href="https://www.google.com/maps?q={{ issue.latitude }},{{ issue.longitude }}"
+                   target="_blank" rel="noopener"
+                   style="color:var(--accent); margin-left:8px; font-weight:600">↗ Google Maps</a>
+            </div>
+
+            {% if issue.latitude and issue.longitude %}
+            <div id="detail-map"></div>
+            {% endif %}
+        </div>
+
+        {# Status / history timeline #}
+        <div class="card">
+            <h3 style="font-size:13px; font-weight:700; margin-bottom:16px; color:var(--text2); text-transform:uppercase; letter-spacing:.5px">📆 Status History</h3>
+
+            {% if history %}
+            <div class="timeline">
+                {% for update in history %}
+                <div class="tl-item">
+                    <div class="tl-dot {{ update.new_status }}">
+                        {% if update.new_status == 'resolved' %}✓
+                        {% elif update.new_status == 'in_progress' %}▶
+                        {% elif update.new_status == 'closed' %}⊡
+                        {% else %}!{% endif %}
+                    </div>
+                    <div class="tl-body">
+                        <div class="tl-header">
+                            <div class="tl-title">
+                                <span class="badge badge-{{ update.old_status }}" style="font-size:10px">{{ update.old_status|capfirst }}</span>
+                                <span style="margin:0 5px; color:var(--text2)">→</span>
+                                <span class="badge badge-{{ update.new_status }}" style="font-size:10px">{{ update.new_status|capfirst }}</span>
+                                <span class="notif-badge">🔔 Notified</span>
+                            </div>
+                            <span class="tl-meta">{{ update.timestamp|date:"d M Y, H:i" }}</span>
+                        </div>
+                        <div class="tl-sub">By {{ update.updated_by.full_name }}</div>
+                        {% if update.note %}<div class="tl-note">{{ update.note }}</div>{% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p style="color:var(--text2)">No status changes recorded yet.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    {# ══════ RIGHT COLUMN ══════ #}
+    <div>
+
+        {# Issue details #}
+        <div class="card" style="margin-bottom:18px">
+            <h3 style="font-size:13px; font-weight:700; margin-bottom:14px; color:var(--text2); text-transform:uppercase; letter-spacing:.5px">ℹ️ Issue Details</h3>
+            <div style="display:flex; flex-direction:column; gap:12px">
+                <div class="info-item">
+                    <label>Category</label>
+                    <p>{{ issue.category|capfirst }}</p>
+                </div>
+                <div class="info-item">
+                    <label>Upvotes</label>
+                    <p>👍 {{ issue.upvote_count }}</p>
+                </div>
+                <div class="info-item">
+                    <label>Voice Input</label>
+                    <p>{{ issue.was_voice_input|yesno:"Yes,No" }}</p>
+                </div>
+                <div class="info-item">
+                    <label>Issue ID</label>
+                    <p style="color:var(--text2)">#{{ issue.id }}</p>
+                </div>
+                {% if issue.authority_decision %}
+                <div class="info-item">
+                    <label>Authority Decision</label>
+                    <p style="color:#f87171; font-weight:700">{{ issue.authority_decision|capfirst }}</p>
+                </div>
+                {% endif %}
+                {% if issue.authority_note %}
+                <div class="info-item">
+                    <label>Authority Note</label>
+                    <p style="color:var(--text2)">{{ issue.authority_note }}</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        {# Reporter reputation card #}
+        <div class="card" style="margin-bottom:18px">
+            <h3 style="font-size:13px; font-weight:700; margin-bottom:14px; color:var(--text2); text-transform:uppercase; letter-spacing:.5px">👤 Reporter</h3>
+            <div style="font-size:16px; font-weight:700; margin-bottom:3px">{{ issue.reported_by.full_name }}</div>
+            <div style="font-size:12px; color:var(--text2); margin-bottom:12px">{{ issue.reported_by.email }}</div>
+
+            <div style="background:var(--bg); border-radius:8px; padding:12px; text-align:center; margin-bottom:10px">
+                <div style="font-size:30px; font-weight:800">{{ issue.reported_by.reputation_score }}</div>
+                <div style="font-size:11px; color:var(--text2); margin-top:2px">Reputation Score / 100</div>
+                <div style="margin-top:8px; background:var(--surface2); border-radius:4px; height:6px; overflow:hidden">
+                    <div style="height:100%; width:{{ issue.reported_by.reputation_score }}%; border-radius:4px; transition:width .4s; background:
+                        {% if issue.reported_by.reputation_score > 80 %}#facc15
+                        {% elif issue.reported_by.reputation_score > 60 %}#38bdf8
+                        {% elif issue.reported_by.reputation_score > 30 %}#94a3b8
+                        {% else %}#ef4444{% endif %}"></div>
+                </div>
+            </div>
+
+            <div style="text-align:center">
+                {% if issue.reported_by.reputation_level == 'highly_trusted' %}
+                <span class="badge badge-highly_trusted">★ Highly Trusted</span>
+                {% elif issue.reported_by.reputation_level == 'trusted' %}
+                <span class="badge badge-trusted">✓ Trusted Citizen</span>
+                {% elif issue.reported_by.reputation_level == 'low' %}
+                <span class="badge badge-low-rep">⚠ Low Trust</span>
+                {% else %}
+                <span class="badge" style="background:var(--surface2); color:var(--text2)">Normal</span>
+                {% endif %}
+            </div>
+        </div>
+
+        {# ── CURRENT STATUS + NEXT ACTIONS ── #}
+        {% if not issue.authority_decision %}
+        <div class="card" style="margin-bottom:18px">
+            <h3 style="font-size:13px; font-weight:700; margin-bottom:6px; color:var(--text2); text-transform:uppercase; letter-spacing:.5px">🔄 Status &amp; Actions</h3>
+
+            {# Visual workflow #}
+            <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:16px; font-size:12px; font-weight:600">
+                {% for s, label in issue.STATUS_CHOICES %}
+                <span style="padding:4px 10px; border-radius:999px;
+                    {% if issue.status == s %}
+                        background:var(--accent); color:#fff;
+                    {% elif issue.status == 'closed' or issue.status == 'resolved' and s == 'in_progress' or issue.status == 'in_progress' and s == 'reported' %}
+                        background:var(--surface2); color:var(--text2); opacity:.6;
+                    {% else %}
+                        background:var(--surface2); color:var(--text2);
+                    {% endif %}">{{ label }}</span>
+                {% if not forloop.last %}<span style="color:var(--text2)">›</span>{% endif %}
+                {% endfor %}
+            </div>
+
+            <form method="post">
+                {% csrf_token %}
+                <label style="font-size:11px; color:var(--text2); font-weight:600; text-transform:uppercase; letter-spacing:.5px; display:block; margin-bottom:6px">Note for citizen (optional)</label>
+                <textarea name="note" rows="2" placeholder="Add a public note…"
+                    style="background:var(--bg); border:1px solid var(--border); color:var(--text);
+                           border-radius:8px; padding:8px 12px; font-size:13px; font-family:inherit;
+                           outline:none; resize:vertical; width:100%; margin-bottom:10px; transition:border-color .15s"
+                    onfocus="this.style.borderColor='var(--accent)'"
+                    onblur="this.style.borderColor='var(--border)'"></textarea>
+
+                <div style="display:flex; flex-wrap:wrap; gap:8px">
+                    {% if issue.status == 'reported' %}
+                    <button type="submit" name="action" value="in_progress" class="btn btn-warning">
+                        ▶ Move to In Progress
+                    </button>
+                    {% endif %}
+                    {% if issue.status == 'in_progress' %}
+                    <button type="submit" name="action" value="resolved" class="btn btn-success">
+                        ✓ Mark Resolved <span class="notif-badge">+20 rep</span>
+                    </button>
+                    {% endif %}
+                    {% if issue.status == 'resolved' %}
+                    <button type="submit" name="action" value="closed" class="btn btn-ghost">
+                        ⊡ Close Issue
+                    </button>
+                    {% endif %}
+                </div>
+            </form>
+        </div>
+
+        {# Invalid / Fake — only for reported status #}
+        {% if issue.status == 'reported' %}
+        <div class="card" style="margin-bottom:18px; border-color:rgba(239,68,68,.25)">
+            <h3 style="font-size:13px; font-weight:700; margin-bottom:10px; color:var(--text2); text-transform:uppercase; letter-spacing:.5px">⚠️ Mark Invalid / Fake</h3>
+            <p style="font-size:12px; color:var(--text2); margin-bottom:10px">A notification will be sent to the reporter. Reputation will be deducted.</p>
+            <form method="post">
+                {% csrf_token %}
+                <textarea name="note" rows="2" placeholder="Reason (required)…" required
+                    style="background:var(--bg); border:1px solid var(--border); color:var(--text);
+                           border-radius:8px; padding:8px 12px; font-size:13px; font-family:inherit;
+                           outline:none; resize:vertical; width:100%; margin-bottom:10px; transition:border-color .15s"
+                    onfocus="this.style.borderColor='var(--accent)'"
+                    onblur="this.style.borderColor='var(--border)'"></textarea>
+                <div style="display:flex; gap:8px; flex-wrap:wrap">
+                    <button type="submit" name="action" value="invalid" class="btn"
+                            style="background:rgba(245,158,11,.15); color:#fbbf24; border:1px solid rgba(245,158,11,.4)">
+                        ⚠ Invalid <span class="notif-badge" style="color:#fbbf24; border-color:rgba(245,158,11,.4); background:rgba(245,158,11,.1)">−15 rep</span>
+                    </button>
+                    <button type="submit" name="action" value="fake" class="btn"
+                            style="background:rgba(239,68,68,.15); color:#f87171; border:1px solid rgba(239,68,68,.4)">
+                        ✕ Fake <span class="notif-badge" style="color:#f87171; border-color:rgba(239,68,68,.4); background:rgba(239,68,68,.1)">−30 rep</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+        {% endif %}
+
+        {% else %}
+        {# Authority decision already made #}
+        <div class="card" style="margin-bottom:18px; border-color:rgba(239,68,68,.35)">
+            <div style="font-size:12px; color:var(--text2); text-transform:uppercase; font-weight:600; letter-spacing:.5px; margin-bottom:6px">Authority Decision</div>
+            <div style="font-size:16px; font-weight:700; color:#f87171; margin-bottom:6px">{{ issue.authority_decision|capfirst }}</div>
+            <div style="font-size:13px; color:var(--text2)">{{ issue.authority_note }}</div>
+        </div>
+        {% endif %}
+
+        {# Group as Duplicate #}
+        <div class="card" style="border-color:rgba(139,92,246,.25)">
+            <h3 style="font-size:13px; font-weight:700; margin-bottom:8px; color:#c084fc; text-transform:uppercase; letter-spacing:.5px">🔗 Group as Duplicate</h3>
+            <p style="font-size:12px; color:var(--text2); margin-bottom:10px">Link this report under a canonical issue. The reporter will be notified.</p>
+            <form method="post" action="{% url 'authority:associate-duplicate' issue.id %}">
+                {% csrf_token %}
+                <div style="display:flex; gap:8px; align-items:center">
+                    <input type="number" name="canonical_id" placeholder="Canonical issue ID" min="1"
+                           style="background:var(--bg); border:1px solid var(--border); color:var(--text);
+                                  border-radius:8px; padding:8px 12px; font-size:13px; font-family:inherit;
+                                  outline:none; width:100%; transition:border-color .15s"
+                           onfocus="this.style.borderColor='var(--accent)'"
+                           onblur="this.style.borderColor='var(--border)'">
+                    <button type="submit" class="btn"
+                            style="background:rgba(139,92,246,.2); color:#c084fc; border:1px solid rgba(139,92,246,.4); white-space:nowrap; flex-shrink:0">
+                        Link →
+                    </button>
+                </div>
+            </form>
+        </div>
+
+    </div>
+</div>
+
+{# ── LEAFLET MINI-MAP ── #}
+{% if issue.latitude and issue.longitude %}
+<script>
+(function () {
+    const lat = {{ issue.latitude }};
+    const lng = {{ issue.longitude }};
+    const isDark = (localStorage.getItem('auth-theme') || 'dark') === 'dark';
+
+    const map = L.map('detail-map', { zoomControl: true, scrollWheelZoom: false })
+        .setView([lat, lng], 16);
+
+    const tileUrl = isDark
+        ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+        : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+
+    L.tileLayer(tileUrl, {
+        attribution: '© OpenStreetMap contributors © CARTO',
+        subdomains: 'abcd',
+        maxZoom: 19
+    }).addTo(map);
+
+    const icon = L.divIcon({
+        html: '<div style="width:16px;height:16px;border-radius:50%;background:#ef4444;border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.5)"></div>',
+        className: '',
+        iconSize: [16, 16],
+        iconAnchor: [8, 8]
+    });
+
+    L.marker([lat, lng], { icon })
+        .addTo(map)
+        .bindPopup('Issue #{{ issue.id }}<br>{{ issue.category|capfirst }}')
+        .openPopup();
+})();
+</script>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,146 @@
+{% extends "authority/base.html" %}
+{% block title %}Map View{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Map View</h1>
+    <p>All reported issues shown on map. Click a marker for details.</p>
+</div>
+
+<div class="card" style="margin-bottom:16px; padding:12px 16px">
+    <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:center; font-size:13px">
+        <strong>Legend:</strong>
+        <span>🔴 Reported</span>
+        <span>🟠 In Progress</span>
+        <span>🟢 Resolved</span>
+        <span>⚫ Closed</span>
+        <span style="margin-left:auto; color:#94a3b8">{{ map_data|length }} issue{{ map_data|length|pluralize }} on map</span>
+    </div>
+</div>
+
+<div id="authority-map"></div>
+
+<div id="issue-popup" style="display:none; background:#1e293b; border:1px solid #475569; border-radius:10px; padding:16px; margin-top:16px">
+    <div id="popup-content"></div>
+</div>
+
+<script>
+    // ── Parse issues from Django context ──
+    const issues = {{ map_data|safe }};
+
+    // ── Color helpers ──
+    function statusColor(status) {
+        switch (status) {
+            case 'reported':    return '#ef4444';
+            case 'in_progress': return '#f97316';
+            case 'resolved':    return '#22c55e';
+            case 'closed':      return '#64748b';
+            default:            return '#3b82f6';
+        }
+    }
+
+    function severityColor(severity) {
+        switch (severity) {
+            case 'critical': return '#ef4444';
+            case 'high':     return '#f97316';
+            case 'medium':   return '#f59e0b';
+            case 'low':      return '#22c55e';
+            default:         return '#94a3b8';
+        }
+    }
+
+    // ── Custom marker icon ──
+    function makeIcon(color) {
+        return L.divIcon({
+            html: `<div style="width:14px;height:14px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.6)"></div>`,
+            className: '',
+            iconSize: [14, 14],
+            iconAnchor: [7, 7],
+        });
+    }
+
+    // ── Determine initial center ──
+    let defaultLat = 10.8505;
+    let defaultLng = 76.2711;
+
+    if (issues.length > 0) {
+        defaultLat = parseFloat(issues[0].latitude);
+        defaultLng = parseFloat(issues[0].longitude);
+    }
+
+    // ── Initialise Leaflet map ──
+    const map = L.map('authority-map', {
+        center: [defaultLat, defaultLng],
+        zoom: 13,
+        zoomControl: true,
+    });
+
+    // ── Dark tile layer ──
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap contributors © CARTO',
+        subdomains: 'abcd',
+        maxZoom: 19
+    }).addTo(map);
+
+    // ── Add markers ──
+    issues.forEach(issue => {
+        const lat = parseFloat(issue.latitude);
+        const lng = parseFloat(issue.longitude);
+
+        if (isNaN(lat) || isNaN(lng)) return;
+
+        const color = statusColor(issue.status);
+        const marker = L.marker([lat, lng], { icon: makeIcon(color) }).addTo(map);
+
+        marker.on('click', () => {
+            const popup = document.getElementById('issue-popup');
+            const content = document.getElementById('popup-content');
+
+            content.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px">
+                    <div>
+                        <a href="/authority/issues/${issue.id}/" style="font-size:16px; font-weight:700; color:#3b82f6; text-decoration:none">Issue #${issue.id}</a>
+                        <div style="font-size:12px; color:#94a3b8; margin-top:2px">${issue.category ? issue.category.charAt(0).toUpperCase() + issue.category.slice(1) : 'Unknown'}</div>
+                    </div>
+                    <button onclick="document.getElementById('issue-popup').style.display='none'"
+                            style="background:none; border:none; color:#94a3b8; cursor:pointer; font-size:18px; line-height:1">×</button>
+                </div>
+                <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px">
+                    <span style="padding:3px 8px; border-radius:999px; font-size:11px; font-weight:700; background:${color}20; color:${color}; border:1px solid ${color}40">
+                        ${(issue.status || '').replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                    </span>
+                    ${issue.severity ? `<span style="padding:3px 8px; border-radius:999px; font-size:11px; font-weight:700; background:${severityColor(issue.severity)}20; color:${severityColor(issue.severity)}; border:1px solid ${severityColor(issue.severity)}40">⚠ ${issue.severity.charAt(0).toUpperCase() + issue.severity.slice(1)}</span>` : ''}
+                </div>
+                <div style="font-size:13px; color:#94a3b8">
+                    👍 ${issue.upvotes || 0} upvote${issue.upvotes !== 1 ? 's' : ''} &nbsp;|&nbsp;
+                    📍 ${lat.toFixed(5)}, ${lng.toFixed(5)}
+                </div>
+                <div style="margin-top:12px">
+                    <a href="/authority/issues/${issue.id}/" class="btn btn-primary" style="font-size:12px; text-decoration:none; display:inline-flex; align-items:center; gap:4px">View Details →</a>
+                </div>
+            `;
+
+            popup.style.display = 'block';
+
+            // Smooth scroll to popup
+            popup.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        });
+    });
+
+    // ── Fit map to markers if there are issues ──
+    if (issues.length > 0) {
+        const coords = issues
+            .map(i => [parseFloat(i.latitude), parseFloat(i.longitude)])
+            .filter(([la, lo]) => !isNaN(la) && !isNaN(lo));
+
+        if (coords.length > 0) {
+            map.fitBounds(coords, { padding: [30, 30], maxZoom: 15 });
+        }
+    }
+</script>
+{% endblock %}

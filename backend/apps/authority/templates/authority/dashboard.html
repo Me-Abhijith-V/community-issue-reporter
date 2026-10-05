@@ -1,0 +1,214 @@
+{% extends "authority/base.html" %}
+{% block title %}Dashboard{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Dashboard</h1>
+    <p>Overview of all reported community issues</p>
+</div>
+
+{# ── Stat cards ── #}
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-value" style="color:var(--text)">{{ total }}</div>
+        <div class="stat-label">Total Issues</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" style="color:#fbbf24">{{ reported }}</div>
+        <div class="stat-label">Reported</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" style="color:#60a5fa">{{ in_progress }}</div>
+        <div class="stat-label">In Progress</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" style="color:#4ade80">{{ resolved }}</div>
+        <div class="stat-label">Resolved</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" style="color:var(--text2)">{{ closed }}</div>
+        <div class="stat-label">Closed</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" style="color:#f87171">{{ high_priority }}</div>
+        <div class="stat-label">High Priority</div>
+    </div>
+</div>
+
+{# ── Charts row ── #}
+<div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; margin-bottom:28px">
+
+    <div class="card">
+        <div style="font-size:13px; font-weight:700; color:var(--text2); margin-bottom:12px; text-transform:uppercase; letter-spacing:.5px">By Category</div>
+        <canvas id="chart-category" height="180"></canvas>
+    </div>
+
+    <div class="card">
+        <div style="font-size:13px; font-weight:700; color:var(--text2); margin-bottom:12px; text-transform:uppercase; letter-spacing:.5px">By Status</div>
+        <canvas id="chart-status" height="180"></canvas>
+    </div>
+
+    <div class="card">
+        <div style="font-size:13px; font-weight:700; color:var(--text2); margin-bottom:12px; text-transform:uppercase; letter-spacing:.5px">By Severity</div>
+        <canvas id="chart-severity" height="180"></canvas>
+    </div>
+
+</div>
+
+{# ── Recent issues table ── #}
+<div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
+        <h2 style="font-size:16px; font-weight:700">Recent Issues</h2>
+        <a href="{% url 'authority:issues' %}" class="btn btn-ghost" style="font-size:12px">View All →</a>
+    </div>
+
+    {% if recent_issues %}
+    <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Description</th>
+                    <th>Category</th>
+                    <th>Severity</th>
+                    <th>Status</th>
+                    <th>Duplicates</th>
+                    <th>Reporter</th>
+                    <th>Date</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for issue in recent_issues %}
+                <tr>
+                    <td><a href="{% url 'authority:issue-detail' issue.id %}">#{{ issue.id }}</a></td>
+                    <td style="max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">
+                        {{ issue.translated_description|default:issue.original_description|truncatechars:70 }}
+                    </td>
+                    <td>{{ issue.category|capfirst }}</td>
+                    <td>
+                        {% if issue.ai_severity %}
+                        <span class="badge badge-{{ issue.ai_severity }}">{{ issue.ai_severity|capfirst }}</span>
+                        {% else %}—{% endif %}
+                    </td>
+                    <td>
+                        <span class="badge badge-{{ issue.status }}">{{ issue.status|capfirst }}</span>
+                    </td>
+                    <td>
+                        {% with dup_count=issue.duplicate_issues.count %}
+                        {% if dup_count > 0 %}
+                        <span class="badge badge-duplicate">{{ dup_count }} duplicate{{ dup_count|pluralize }}</span>
+                        {% else %}—{% endif %}
+                        {% endwith %}
+                    </td>
+                    <td>
+                        {{ issue.reported_by.full_name }}
+                        {% if issue.reported_by.reputation_level == 'highly_trusted' %}
+                        <span class="badge badge-highly_trusted" style="font-size:10px">★ HT</span>
+                        {% elif issue.reported_by.reputation_level == 'trusted' %}
+                        <span class="badge badge-trusted" style="font-size:10px">✓ T</span>
+                        {% endif %}
+                    </td>
+                    <td style="white-space:nowrap; color:var(--text2)">{{ issue.created_at|date:"d M Y" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p style="color:var(--text2); text-align:center; padding:32px 0">No issues reported yet.</p>
+    {% endif %}
+</div>
+
+<script>
+(function () {
+    // Read theme to set chart colours
+    const isDark = (localStorage.getItem('auth-theme') || 'dark') === 'dark';
+    const gridColor  = isDark ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.07)';
+    const tickColor  = isDark ? '#94a3b8' : '#475569';
+    const labelColor = isDark ? '#f1f5f9' : '#0f172a';
+
+    Chart.defaults.color = tickColor;
+    Chart.defaults.font.family = "'Inter', sans-serif";
+    Chart.defaults.font.size   = 12;
+
+    const baseOpts = (extra) => Object.assign({
+        responsive: true,
+        plugins: {
+            legend: { display: false },
+            tooltip: { backgroundColor: isDark ? '#1e293b' : '#fff',
+                       titleColor: labelColor, bodyColor: tickColor,
+                       borderColor: isDark ? '#475569' : '#cbd5e1', borderWidth: 1 }
+        }
+    }, extra || {});
+
+    // ── Category donut ──────────────────────────────────────
+    new Chart(document.getElementById('chart-category'), {
+        type: 'doughnut',
+        data: {
+            labels: {{ category_labels_json|safe }},
+            datasets: [{
+                data: {{ category_data_json|safe }},
+                backgroundColor: ['#60a5fa','#4ade80','#fbbf24','#f87171','#c084fc','#38bdf8'],
+                borderWidth: 0,
+                hoverOffset: 6
+            }]
+        },
+        options: {
+            responsive: true,
+            cutout: '65%',
+            plugins: {
+                legend: { display: true, position: 'bottom',
+                          labels: { color: tickColor, padding: 10, font: { size: 11 } } },
+                tooltip: Chart.defaults.plugins.tooltip
+            }
+        }
+    });
+
+    // ── Status bar ──────────────────────────────────────────
+    new Chart(document.getElementById('chart-status'), {
+        type: 'bar',
+        data: {
+            labels: {{ status_labels_json|safe }},
+            datasets: [{
+                data: {{ status_data_json|safe }},
+                backgroundColor: ['#fbbf24','#60a5fa','#4ade80','#94a3b8'],
+                borderRadius: 6,
+                borderWidth: 0
+            }]
+        },
+        options: baseOpts({
+            scales: {
+                x: { grid: { color: gridColor }, ticks: { color: tickColor } },
+                y: { grid: { color: gridColor }, ticks: { color: tickColor, stepSize: 1, precision: 0 },
+                     beginAtZero: true }
+            }
+        })
+    });
+
+    // ── Severity bar ────────────────────────────────────────
+    new Chart(document.getElementById('chart-severity'), {
+        type: 'bar',
+        data: {
+            labels: {{ severity_labels_json|safe }},
+            datasets: [{
+                data: {{ severity_data_json|safe }},
+                backgroundColor: ['#ef4444','#f97316','#f59e0b','#4ade80','#94a3b8'],
+                borderRadius: 6,
+                borderWidth: 0
+            }]
+        },
+        options: baseOpts({
+            scales: {
+                x: { grid: { color: gridColor }, ticks: { color: tickColor } },
+                y: { grid: { color: gridColor }, ticks: { color: tickColor, stepSize: 1, precision: 0 },
+                     beginAtZero: true }
+            }
+        })
+    });
+})();
+</script>
+{% endblock %}

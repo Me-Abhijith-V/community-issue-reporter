@@ -1,0 +1,183 @@
+{% extends "authority/base.html" %}
+{% load authority_tags %}
+{% block title %}Issues{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Issue List</h1>
+    <p>Sorted by severity (critical first). Duplicate reports are grouped under the canonical issue.</p>
+</div>
+
+<form method="get" class="filter-bar">
+    <input type="text" name="search" value="{{ search }}" placeholder="Search description, reporter...">
+
+    <select name="category">
+        <option value="">All Categories</option>
+        {% for val, label in category_choices %}
+        <option value="{{ val }}" {% if category == val %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+    </select>
+
+    <select name="status">
+        <option value="">All Statuses</option>
+        {% for val, label in status_choices %}
+        <option value="{{ val }}" {% if status == val %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+    </select>
+
+    <select name="severity">
+        <option value="">All Severities</option>
+        {% for val, label in severity_choices %}
+        <option value="{{ val }}" {% if severity == val %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+    </select>
+
+    <select name="sort" style="font-weight: 600;">
+        <option value="sev_high" {% if sort == 'sev_high' %}selected{% endif %}>Severity: Highest → Lowest</option>
+        <option value="sev_low" {% if sort == 'sev_low' %}selected{% endif %}>Severity: Lowest → Highest</option>
+        <option value="date_new" {% if sort == 'date_new' %}selected{% endif %}>Date reported: Newest → Oldest</option>
+        <option value="date_old" {% if sort == 'date_old' %}selected{% endif %}>Date reported: Oldest → Newest</option>
+        <option value="updated_new" {% if sort == 'updated_new' %}selected{% endif %}>Last updated: Newest → Oldest</option>
+        <option value="updated_old" {% if sort == 'updated_old' %}selected{% endif %}>Last updated: Oldest → Newest</option>
+        <option value="status_a" {% if sort == 'status_a' %}selected{% endif %}>Status: A → Z</option>
+        <option value="status_z" {% if sort == 'status_z' %}selected{% endif %}>Status: Z → A</option>
+        <option value="category_a" {% if sort == 'category_a' %}selected{% endif %}>Category: A → Z</option>
+        <option value="category_z" {% if sort == 'category_z' %}selected{% endif %}>Category: Z → A</option>
+        <option value="upvotes_high" {% if sort == 'upvotes_high' %}selected{% endif %}>Upvotes: Highest → Lowest</option>
+        <option value="upvotes_low" {% if sort == 'upvotes_low' %}selected{% endif %}>Upvotes: Lowest → Highest</option>
+        <option value="id_high" {% if sort == 'id_high' %}selected{% endif %}>Issue ID: Highest → Lowest</option>
+        <option value="id_low" {% if sort == 'id_low' %}selected{% endif %}>Issue ID: Lowest → Highest</option>
+        <option value="location_a" {% if sort == 'location_a' %}selected{% endif %}>Location: A → Z</option>
+        <option value="reporter_a" {% if sort == 'reporter_a' %}selected{% endif %}>Reporter: A → Z</option>
+    </select>
+
+    <button type="submit" class="btn btn-primary">Filter</button>
+    <a href="{% url 'authority:issues' %}" class="btn btn-ghost">Reset</a>
+</form>
+
+{% if page_obj %}
+<div class="table-wrapper">
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Action</th>
+                <th>Description</th>
+                <th>Category</th>
+                <th>AI Severity ▼</th>
+                <th>AI Duplicate Info</th>
+                <th>Duplicates</th>
+                <th>Status</th>
+                <th>Upvotes</th>
+                <th>Location</th>
+                <th>Reporter (Rep.)</th>
+                <th>Date</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for issue in page_obj %}
+            <tr>
+                <td style="font-weight:600; color:var(--text2)">#{{ issue.id }}</td>
+
+                <td style="white-space:nowrap">
+                    <a href="{% url 'authority:issue-detail' issue.id %}" class="btn btn-primary" style="font-size:11px; padding:5px 12px">
+                        View Details
+                    </a>
+                </td>
+
+                <td style="max-width:220px">
+                    <div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:220px">
+                        {{ issue.translated_description|default:issue.original_description|truncatechars:80 }}
+                    </div>
+                    {% if issue.detected_language and issue.detected_language != 'en' %}
+                    <div style="font-size:11px; color:var(--text2); margin-top:2px">🌐 {{ issue.detected_language|upper }}</div>
+                    {% endif %}
+                </td>
+
+                <td>{{ issue.category|capfirst }}</td>
+
+                <td>
+                    {% if issue.ai_severity %}
+                    <span class="badge badge-{{ issue.ai_severity }}">{{ issue.ai_severity|capfirst }}</span>
+                    {% else %}<span style="color:var(--border)">—</span>{% endif %}
+                </td>
+
+                <td>
+                    {% if issue.ai_is_duplicate %}
+                    <div style="background:rgba(139,92,246,.12); border:1px solid rgba(139,92,246,.35); border-radius:6px; padding:5px 9px; font-size:12px; color:#c084fc">
+                        🔁 Duplicate of
+                        {% if issue.ai_duplicate_of %}
+                        <a href="{% url 'authority:issue-detail' issue.ai_duplicate_of.id %}" style="color:#a78bfa">#{{ issue.ai_duplicate_of.id }}</a>
+                        {% endif %}
+                    </div>
+                    {% else %}
+                    <span style="color:var(--border); font-size:12px">Unique</span>
+                    {% endif %}
+                </td>
+
+                <td>
+                    {% with cnt=issue.duplicate_issues.count %}
+                    {% if cnt > 0 %}
+                    <span class="badge badge-duplicate">{{ cnt }} dup{{ cnt|pluralize }}</span>
+                    {% else %}<span style="color:var(--border)">—</span>{% endif %}
+                    {% endwith %}
+                </td>
+
+                <td><span class="badge badge-{{ issue.status }}">{{ issue.status|capfirst }}</span></td>
+
+                <td style="text-align:center">{{ issue.upvote_count }}</td>
+
+                {# ── Geocoded location column ── #}
+                <td style="max-width:180px; font-size:12px; color:var(--text2)">
+                    {% if issue.id in geo_map %}
+                        <span title="{{ issue.latitude }}, {{ issue.longitude }}">{{ geo_map|get_item:issue.id }}</span>
+                    {% elif issue.latitude %}
+                        {{ issue.latitude|floatformat:5 }}, {{ issue.longitude|floatformat:5 }}
+                    {% else %}
+                        —
+                    {% endif %}
+                </td>
+
+                <td>
+                    <div style="font-size:13px; font-weight:600">{{ issue.reported_by.full_name }}</div>
+                    <div style="font-size:11px; color:var(--text2)">
+                        Score: {{ issue.reported_by.reputation_score }}
+                        {% if issue.reported_by.reputation_level == 'highly_trusted' %}
+                        <span class="badge badge-highly_trusted" style="font-size:10px">★ HT</span>
+                        {% elif issue.reported_by.reputation_level == 'trusted' %}
+                        <span class="badge badge-trusted" style="font-size:10px">✓ T</span>
+                        {% elif issue.reported_by.reputation_level == 'low' %}
+                        <span class="badge badge-low-rep" style="font-size:10px">⚠ Low</span>
+                        {% endif %}
+                    </div>
+                </td>
+
+                <td style="white-space:nowrap; font-size:12px">
+                    <div><span style="color:var(--text2)">Reported:</span> <br> <strong>{{ issue.created_at|date:"d M Y, H:i" }}</strong></div>
+                    <div style="margin-top:4px"><span style="color:var(--text2)">Updated:</span> <br> <strong>{{ issue.updated_at|date:"d M Y, H:i" }}</strong></div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="pagination">
+    {% if page_obj.has_previous %}
+    <a href="?page={{ page_obj.previous_page_number }}&search={{ search }}&category={{ category }}&status={{ status }}&severity={{ severity }}&sort={{ sort }}">← Prev</a>
+    {% endif %}
+
+    <span class="current">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+
+    {% if page_obj.has_next %}
+    <a href="?page={{ page_obj.next_page_number }}&search={{ search }}&category={{ category }}&status={{ status }}&severity={{ severity }}&sort={{ sort }}">Next →</a>
+    {% endif %}
+</div>
+
+{% else %}
+<div class="card" style="text-align:center; padding:48px 20px; color:var(--text2)">
+    <div style="font-size:48px; margin-bottom:12px">📋</div>
+    <p>No issues found matching your filters.</p>
+</div>
+{% endif %}
+{% endblock %}

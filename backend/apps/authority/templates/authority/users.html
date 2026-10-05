@@ -1,0 +1,170 @@
+{% extends "authority/base.html" %}
+{% block title %}Citizens{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Citizens</h1>
+    <p>Manage citizen registrations and approved users</p>
+</div>
+
+{% if messages %}
+{% for msg in messages %}
+<div class="alert" style="padding:12px 16px; border-radius:8px; margin-bottom:16px;
+    background:{% if msg.tags == 'success' %}rgba(34,197,94,.12){% elif msg.tags == 'warning' %}rgba(251,191,36,.12){% else %}rgba(239,68,68,.12){% endif %};
+    color:{% if msg.tags == 'success' %}#4ade80{% elif msg.tags == 'warning' %}#fbbf24{% else %}#f87171{% endif %};
+    border:1px solid {% if msg.tags == 'success' %}rgba(34,197,94,.3){% elif msg.tags == 'warning' %}rgba(251,191,36,.3){% else %}rgba(239,68,68,.3){% endif %}">
+    {{ msg }}
+</div>
+{% endfor %}
+{% endif %}
+
+{# ── PENDING REGISTRATIONS ─────────────────────────────────────────────── #}
+{% if pending_users %}
+<div style="margin-bottom:32px">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px">
+        <h2 style="margin:0; font-size:18px; color:#f8fafc">Pending Registrations</h2>
+        <span style="background:rgba(251,191,36,.15); color:#fbbf24; border:1px solid rgba(251,191,36,.3);
+                     border-radius:999px; padding:2px 10px; font-size:12px; font-weight:700">
+            {{ pending_users|length }} waiting
+        </span>
+    </div>
+
+    <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Phone</th>
+                    <th>Registered</th>
+                    <th style="text-align:center">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for u in pending_users %}
+                <tr style="border-left:3px solid #fbbf24">
+                    <td>{{ u.id }}</td>
+                    <td style="font-weight:600">{{ u.full_name }}</td>
+                    <td style="color:#94a3b8">{{ u.email }}</td>
+                    <td style="color:#94a3b8">{{ u.phone|default:"—" }}</td>
+                    <td style="color:#94a3b8; font-size:12px">{{ u.date_joined|date:"d M Y, H:i" }}</td>
+                    <td style="text-align:center">
+                        <div style="display:flex; gap:8px; justify-content:center">
+                            <form method="post" action="{% url 'authority:approve-user' u.pk %}" style="display:inline">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-primary" style="padding:6px 14px; font-size:13px"
+                                        onclick="return confirm('Approve {{ u.full_name }}?')">
+                                    ✓ Approve
+                                </button>
+                            </form>
+                            <form method="post" action="{% url 'authority:reject-user' u.pk %}" style="display:inline">
+                                {% csrf_token %}
+                                <button type="submit" class="btn" style="padding:6px 14px; font-size:13px;
+                                        background:rgba(239,68,68,.12); color:#f87171; border:1px solid rgba(239,68,68,.3)"
+                                        onclick="return confirm('Reject {{ u.full_name }}? They will not be able to log in.')">
+                                    ✗ Reject
+                                </button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{# ── APPROVED / REJECTED CITIZENS ────────────────────────────────────────── #}
+<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:12px">
+    <h2 style="margin:0; font-size:18px; color:#f8fafc">All Citizens</h2>
+    <form method="get" class="filter-bar" style="margin:0">
+        <input type="text" name="search" value="{{ search }}" placeholder="Search by name or email...">
+        <button type="submit" class="btn btn-primary">Search</button>
+        <a href="{% url 'authority:users' %}" class="btn btn-ghost">Reset</a>
+    </form>
+</div>
+
+{% if page_obj %}
+<div class="table-wrapper">
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Status</th>
+                <th>Reputation</th>
+                <th>Trust Level</th>
+                <th>Reports</th>
+                <th>Joined</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for user in page_obj %}
+            <tr>
+                <td>{{ user.id }}</td>
+                <td style="font-weight:600">{{ user.full_name }}</td>
+                <td style="color:#94a3b8">{{ user.email }}</td>
+                <td>
+                    {% if user.approval_status == 'approved' %}
+                    <span class="badge" style="background:rgba(34,197,94,.12); color:#4ade80; border:1px solid rgba(34,197,94,.25)">✓ Approved</span>
+                    {% elif user.approval_status == 'rejected' %}
+                    <span class="badge" style="background:rgba(239,68,68,.12); color:#f87171; border:1px solid rgba(239,68,68,.25)">✗ Rejected</span>
+                    {% elif user.role == 'authority' %}
+                    <span class="badge" style="background:rgba(59,130,246,.12); color:#60a5fa">Authority</span>
+                    {% else %}
+                    <span class="badge" style="background:#334155; color:#94a3b8">{{ user.approval_status }}</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <div style="display:flex; align-items:center; gap:8px">
+                        <div style="background:#0f172a; border-radius:4px; height:6px; width:80px; overflow:hidden; flex-shrink:0">
+                            <div style="height:100%; width:{{ user.reputation_score }}%; background:
+                                {% if user.reputation_score > 80 %}#facc15
+                                {% elif user.reputation_score > 60 %}#38bdf8
+                                {% elif user.reputation_score > 30 %}#94a3b8
+                                {% else %}#ef4444{% endif %}; border-radius:4px"></div>
+                        </div>
+                        <span style="font-weight:700">{{ user.reputation_score }}/100</span>
+                    </div>
+                </td>
+                <td>
+                    {% if user.reputation_level == 'highly_trusted' %}
+                    <span class="badge badge-highly_trusted">★ Highly Trusted</span>
+                    {% elif user.reputation_level == 'trusted' %}
+                    <span class="badge badge-trusted">✓ Trusted</span>
+                    {% elif user.reputation_level == 'low' %}
+                    <span class="badge badge-low-rep">⚠ Low Trust</span>
+                    {% else %}
+                    <span class="badge" style="background:#334155; color:#94a3b8">Normal</span>
+                    {% endif %}
+                </td>
+                <td style="text-align:center">{{ user.reported_issues.count }}</td>
+                <td style="color:#94a3b8; font-size:12px">{{ user.date_joined|date:"d M Y" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="pagination">
+    {% if page_obj.has_previous %}
+    <a href="?page={{ page_obj.previous_page_number }}&search={{ search }}">← Prev</a>
+    {% endif %}
+
+    <span class="current">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+
+    {% if page_obj.has_next %}
+    <a href="?page={{ page_obj.next_page_number }}&search={{ search }}">Next →</a>
+    {% endif %}
+</div>
+
+{% else %}
+<div class="card" style="text-align:center; padding:48px 20px; color:#94a3b8">
+    <div style="font-size:48px; margin-bottom:12px">👥</div>
+    <p>No citizens found.</p>
+</div>
+{% endif %}
+{% endblock %}

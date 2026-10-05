@@ -1,0 +1,72 @@
+# ==========================================
+# Python / Django
+# ==========================================
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+
+# Environment variables
+backend/.env
+backend/.env.*
+
+# Database
+backend/db.sqlite3
+
+# Uploaded media
+backend/media/
+
+# Static files (if collectstatic is used)
+backend/staticfiles/
+
+# Logs
+*.log
+
+# ==========================================
+# Flutter / Dart
+# ==========================================
+
+mobile/.dart_tool/
+mobile/.packages
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/build/
+mobile/.pub-cache/
+
+# Android
+mobile/android/.gradle/
+mobile/android/local.properties
+
+# Generated app files
+*.apk
+*.aab
+
+# ==========================================
+# IDE
+# ==========================================
+
+.vscode/
+.idea/
+
+# ==========================================
+# Operating System
+# ==========================================
+
+.DS_Store
+Thumbs.db
+
+# ==========================================
+# Git
+# ==========================================
+
+*.orig
+
+*.json
