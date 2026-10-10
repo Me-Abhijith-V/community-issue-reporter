@@ -750,6 +750,9 @@ class _HomeIssueCardState
     final timeAgo =
     _timeAgo(createdAt);
 
+    final rawAddress = widget.issue['address']?.toString().trim();
+    final address = (rawAddress != null && rawAddress.isNotEmpty) ? rawAddress : null;
+
     return Card(
       elevation: 1,
       child: InkWell(
@@ -899,7 +902,7 @@ class _HomeIssueCardState
                 ],
               ),
 
-              if (distance != null) ...[
+              if (address != null || distance != null) ...[
                 const SizedBox(height: 6),
 
                 Row(
@@ -913,14 +916,18 @@ class _HomeIssueCardState
 
                     const SizedBox(width: 4),
 
-                    Text(
-                      _formatDistance(
-                        distance,
-                      ),
-                      style: TextStyle(
-                        fontSize: 12,
-                        color:
-                        Colors.grey.shade600,
+                    Expanded(
+                      child: Text(
+                        address != null && distance != null
+                            ? '$address • ${_formatDistance(distance)}'
+                            : (address ?? _formatDistance(distance!)),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color:
+                          Colors.grey.shade600,
+                        ),
                       ),
                     ),
                   ],

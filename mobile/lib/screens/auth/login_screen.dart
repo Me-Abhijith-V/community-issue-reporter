@@ -49,11 +49,18 @@ class _LoginScreenState extends State<LoginScreen> {
       );
     } on RegistrationRejectedException catch (e) {
       if (!mounted) return;
+      final buffer = StringBuffer(e.message);
+      if (e.rejectionReason != null && e.rejectionReason!.isNotEmpty) {
+        buffer.write('\n\nReason: "${e.rejectionReason}"');
+      }
+      buffer.write(
+        '\n\nIf you believe this was an error or wish to reapply, please contact the municipal authority.',
+      );
       _showStatusDialog(
         icon: Icons.block_rounded,
         iconColor: Colors.red,
         title: 'Registration Rejected',
-        message: e.message,
+        message: buffer.toString(),
       );
     } catch (e) {
       if (!mounted) return;

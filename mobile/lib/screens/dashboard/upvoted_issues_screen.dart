@@ -64,7 +64,15 @@ class _UpvotedIssuesScreenState
   ) async {
     for (final issue in issues) {
       final id = issue['id'] as int?;
-      if (id == null || _addressCache.containsKey(id)) continue;
+      if (id == null) continue;
+
+      final storedAddr = issue['address']?.toString().trim();
+      if (storedAddr != null && storedAddr.isNotEmpty) {
+        _addressCache[id] = storedAddr;
+        continue;
+      }
+
+      if (_addressCache.containsKey(id)) continue;
 
       final lat = double.tryParse(
         issue['latitude']?.toString() ?? '',
@@ -80,10 +88,13 @@ class _UpvotedIssuesScreenState
             await _locationService.reverseGeocode(
           latitude: lat,
           longitude: lng,
+          issueService: _issueService,
         );
-        if (address != null && mounted) {
+        if (mounted) {
           setState(() {
-            _addressCache[id] = address;
+            _addressCache[id] = (address != null && address.isNotEmpty)
+                ? address
+                : 'Address unavailable';
           });
         }
       } catch (_) {}
@@ -254,7 +265,10 @@ class _UpvotedIssuesScreenState
           final issue = _issues[index];
           return _UpvotedIssueCard(
             issue: issue,
-            address: _addressCache[issue['id'] as int?],
+            address: (issue['address'] != null &&
+                    issue['address'].toString().trim().isNotEmpty)
+                ? issue['address'].toString().trim()
+                : _addressCache[issue['id'] as int?],
             statusColor: _statusColor(issue['status'] as String?),
             severityColor:
                 _severityColor(issue['ai_severity'] as String?),

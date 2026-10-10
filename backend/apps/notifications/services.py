@@ -292,3 +292,71 @@ def create_duplicate_notification(issue, canonical_issue):
     )
 
     return notification
+
+
+def create_registration_approval_notification(user):
+    """
+    Notify the citizen that their registration has been approved.
+    """
+    title = "Registration Approved"
+    message = (
+        f"Welcome, {user.full_name}! Your registration has been approved by the authority. "
+        "You can now log in and report community issues."
+    )
+
+    try:
+        notification = Notification.objects.create(
+            user=user,
+            notification_type="registration_approved",
+            title=title,
+            message=message,
+            issue=None,
+        )
+
+        _send_push(
+            user,
+            title,
+            message,
+            data={
+                "notification_type": "registration_approved",
+            },
+        )
+        return notification
+    except Exception as exc:
+        print(f"[Notifications] Registration approval notification failed: {exc}")
+        return None
+
+
+def create_registration_rejection_notification(user, reason=""):
+    """
+    Notify the citizen that their registration could not be approved.
+    """
+    title = "Registration Rejected"
+    reason_text = f" Reason: {reason}." if reason else ""
+    message = (
+        f"Hello {user.full_name}, your citizen registration could not be approved by the authority.{reason_text} "
+        "Please contact the authority if you believe this was in error."
+    )
+
+    try:
+        notification = Notification.objects.create(
+            user=user,
+            notification_type="registration_rejected",
+            title=title,
+            message=message,
+            issue=None,
+        )
+
+        _send_push(
+            user,
+            title,
+            message,
+            data={
+                "notification_type": "registration_rejected",
+                "reason": reason,
+            },
+        )
+        return notification
+    except Exception as exc:
+        print(f"[Notifications] Registration rejection notification failed: {exc}")
+        return None

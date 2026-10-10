@@ -58,6 +58,12 @@ class Issue(models.Model):
         decimal_places=6
     )
 
+    address = models.CharField(
+        max_length=255,
+        blank=True,
+        default=''
+    )
+
     photo = models.ImageField(
         upload_to='issues/'
     )
@@ -93,6 +99,28 @@ class Issue(models.Model):
     )
 
     ai_duplicate_reason = models.TextField(blank=True, default='')
+
+    ai_severity_reason = models.TextField(blank=True, default='')
+
+    ai_severity_basis = models.CharField(
+        max_length=30,
+        blank=True,
+        default='text_only'
+    )
+
+    ai_validation_status = models.CharField(
+        max_length=20,
+        blank=True,
+        default='valid'
+    )
+
+    ai_is_image_match = models.BooleanField(
+        null=True,
+        blank=True,
+        default=True
+    )
+
+    ai_image_match_reason = models.TextField(blank=True, default='')
 
     upvote_count = models.PositiveIntegerField(default=0)
 

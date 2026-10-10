@@ -60,6 +60,14 @@ class IssueSerializer(serializers.ModelSerializer):
     # Count of duplicate issues grouped under this canonical issue
     duplicate_reports_count = serializers.SerializerMethodField()
 
+    ai_status = serializers.SerializerMethodField()
+
+    address = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default=""
+    )
+
     class Meta:
         model = Issue
 
@@ -76,13 +84,20 @@ class IssueSerializer(serializers.ModelSerializer):
             'category',
             'latitude',
             'longitude',
+            'address',
             'photo',
             'status',
             'ai_suggested_category',
             'ai_severity',
+            'ai_severity_reason',
+            'ai_severity_basis',
             'ai_is_duplicate',
             'ai_duplicate_of',
             'ai_duplicate_reason',
+            'ai_validation_status',
+            'ai_is_image_match',
+            'ai_image_match_reason',
+            'ai_status',
             'duplicate_reports_count',
             'upvote_count',
             'was_voice_input',
@@ -99,17 +114,16 @@ class IssueSerializer(serializers.ModelSerializer):
             'reporter_email',
             'reporter_reputation_score',
             'reporter_reputation_level',
-            'translated_description',
-            'detected_language',
-            'ai_suggested_category',
-            'ai_severity',
-            'ai_is_duplicate',
-            'ai_duplicate_of',
-            'ai_duplicate_reason',
+            'ai_status',
             'upvote_count',
             'created_at',
             'updated_at',
         ]
+
+    def get_ai_status(self, obj):
+        if obj.ai_suggested_category and obj.ai_severity:
+            return "success"
+        return "failed"
 
     def get_duplicate_reports_count(self, obj):
         return obj.duplicate_issues.count()

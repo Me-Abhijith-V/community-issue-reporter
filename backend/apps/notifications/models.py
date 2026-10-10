@@ -8,6 +8,8 @@ class Notification(models.Model):
         ('status_update', 'Status Update'),
         ('upvote', 'Upvote'),
         ('duplicate', 'Duplicate Issue'),
+        ('registration_approved', 'Registration Approved'),
+        ('registration_rejected', 'Registration Rejected'),
     ]
 
     user = models.ForeignKey(

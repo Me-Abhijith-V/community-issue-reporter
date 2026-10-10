@@ -119,6 +119,23 @@ class CustomUser(AbstractUser):
         default='pending',
     )
 
+    # Authority review audit fields
+    reviewed_by = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reviewed_registrations',
+    )
+    reviewed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+    rejection_reason = models.TextField(
+        blank=True,
+        default='',
+    )
+
     # Firebase Cloud Messaging token
     fcm_token = models.CharField(
         max_length=255,

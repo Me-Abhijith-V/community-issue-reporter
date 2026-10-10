@@ -1,0 +1,445 @@
+{% extends "authority/base.html" %}
+{% block title %}Citizen Registrations{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Citizen Registrations</h1>
+    <p>Review, verify, and manage citizen registration applications</p>
+</div>
+
+{% if messages %}
+<div class="messages">
+    {% for msg in messages %}
+    <div class="message {{ msg.tags }}">
+        {{ msg }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+{# ── STATS SUMMARY CARDS ─────────────────────────────────────────────── #}
+<div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 24px;">
+    <div class="card" style="border-left: 4px solid var(--warning); display: flex; align-items: center; justify-content: space-between;">
+        <div>
+            <div style="font-size: 12px; color: var(--text2); text-transform: uppercase; font-weight: 600; letter-spacing: .5px;">Pending Approval</div>
+            <div style="font-size: 26px; font-weight: 700; color: #fbbf24; margin-top: 4px;">{{ pending_count }}</div>
+        </div>
+        <div style="font-size: 28px; opacity: .8;">⏳</div>
+    </div>
+    <div class="card" style="border-left: 4px solid var(--success); display: flex; align-items: center; justify-content: space-between;">
+        <div>
+            <div style="font-size: 12px; color: var(--text2); text-transform: uppercase; font-weight: 600; letter-spacing: .5px;">Approved Citizens</div>
+            <div style="font-size: 26px; font-weight: 700; color: #4ade80; margin-top: 4px;">{{ approved_count }}</div>
+        </div>
+        <div style="font-size: 28px; opacity: .8;">✓</div>
+    </div>
+    <div class="card" style="border-left: 4px solid var(--danger); display: flex; align-items: center; justify-content: space-between;">
+        <div>
+            <div style="font-size: 12px; color: var(--text2); text-transform: uppercase; font-weight: 600; letter-spacing: .5px;">Rejected Requests</div>
+            <div style="font-size: 26px; font-weight: 700; color: #f87171; margin-top: 4px;">{{ rejected_count }}</div>
+        </div>
+        <div style="font-size: 28px; opacity: .8;">✗</div>
+    </div>
+    <div class="card" style="border-left: 4px solid var(--accent); display: flex; align-items: center; justify-content: space-between;">
+        <div>
+            <div style="font-size: 12px; color: var(--text2); text-transform: uppercase; font-weight: 600; letter-spacing: .5px;">Total Applications</div>
+            <div style="font-size: 26px; font-weight: 700; color: var(--accent); margin-top: 4px;">{{ total_count }}</div>
+        </div>
+        <div style="font-size: 28px; opacity: .8;">👥</div>
+    </div>
+</div>
+
+{# ── FILTER TABS & SEARCH BAR ─────────────────────────────────────────── #}
+<div class="card" style="padding: 14px 18px; margin-bottom: 20px;">
+    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px;">
+        {# Status filter tabs #}
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <a href="?status=pending{% if search %}&search={{ search }}{% endif %}"
+               class="btn {% if status_filter == 'pending' %}btn-primary{% else %}btn-ghost{% endif %}"
+               style="font-size: 12.5px; padding: 6px 14px;">
+                ⏳ Pending ({{ pending_count }})
+            </a>
+            <a href="?status=approved{% if search %}&search={{ search }}{% endif %}"
+               class="btn {% if status_filter == 'approved' %}btn-primary{% else %}btn-ghost{% endif %}"
+               style="font-size: 12.5px; padding: 6px 14px;">
+                ✓ Approved ({{ approved_count }})
+            </a>
+            <a href="?status=rejected{% if search %}&search={{ search }}{% endif %}"
+               class="btn {% if status_filter == 'rejected' %}btn-primary{% else %}btn-ghost{% endif %}"
+               style="font-size: 12.5px; padding: 6px 14px;">
+                ✗ Rejected ({{ rejected_count }})
+            </a>
+            <a href="?status=all{% if search %}&search={{ search }}{% endif %}"
+               class="btn {% if status_filter == 'all' %}btn-primary{% else %}btn-ghost{% endif %}"
+               style="font-size: 12.5px; padding: 6px 14px;">
+                All ({{ total_count }})
+            </a>
+        </div>
+
+        {# Search input form #}
+        <form method="get" class="filter-bar" style="margin: 0; display: flex; gap: 8px;">
+            <input type="hidden" name="status" value="{{ status_filter }}">
+            <input type="text" name="search" value="{{ search }}" placeholder="Search by name, email, phone..." style="min-width: 240px;">
+            <button type="submit" class="btn btn-primary">Search</button>
+            {% if search %}
+            <a href="?status={{ status_filter }}" class="btn btn-ghost" title="Clear search">✕</a>
+            {% endif %}
+        </form>
+    </div>
+</div>
+
+{# ── REGISTRATIONS TABLE ──────────────────────────────────────────────── #}
+{% if page_obj %}
+<div class="table-wrapper">
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 50px;">#ID</th>
+                <th>Citizen Name</th>
+                <th>Email</th>
+                <th>Phone</th>
+                <th>Language</th>
+                <th>Registration Date</th>
+                <th>Status</th>
+                <th>Review Audit</th>
+                <th style="text-align: center; min-width: 220px;">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for citizen in page_obj %}
+            <tr style="{% if citizen.approval_status == 'pending' %}border-left: 3px solid #fbbf24;{% elif citizen.approval_status == 'rejected' %}border-left: 3px solid #ef4444;{% else %}border-left: 3px solid #22c55e;{% endif %}">
+                <td><span style="color: var(--text2); font-weight: 600;">#{{ citizen.id }}</span></td>
+                <td style="font-weight: 600;">{{ citizen.full_name }}</td>
+                <td style="color: var(--text2);">{{ citizen.email }}</td>
+                <td style="color: var(--text2);">{{ citizen.phone|default:"—" }}</td>
+                <td style="text-transform: uppercase; font-size: 12px; color: var(--text2);">{{ citizen.preferred_language|default:"en" }}</td>
+                <td style="color: var(--text2); font-size: 12.5px;">{{ citizen.date_joined|date:"d M Y, H:i" }}</td>
+                <td>
+                    {% if citizen.approval_status == 'approved' %}
+                    <span class="badge" style="background: rgba(34,197,94,.12); color: #4ade80; border: 1px solid rgba(34,197,94,.3);">
+                        ✓ Approved
+                    </span>
+                    {% elif citizen.approval_status == 'rejected' %}
+                    <span class="badge" style="background: rgba(239,68,68,.12); color: #f87171; border: 1px solid rgba(239,68,68,.3);" title="{{ citizen.rejection_reason }}">
+                        ✗ Rejected
+                    </span>
+                    {% else %}
+                    <span class="badge" style="background: rgba(251,191,36,.12); color: #fbbf24; border: 1px solid rgba(251,191,36,.3);">
+                        ⏳ Pending
+                    </span>
+                    {% endif %}
+                </td>
+                <td style="font-size: 12px; color: var(--text2); max-width: 180px;">
+                    {% if citizen.reviewed_by %}
+                    <div>By: <strong style="color: var(--text);">{{ citizen.reviewed_by.full_name|default:citizen.reviewed_by.email }}</strong></div>
+                    <div style="font-size: 11px;">{{ citizen.reviewed_at|date:"d M Y, H:i" }}</div>
+                    {% if citizen.rejection_reason %}
+                    <div style="color: #f87171; font-size: 11px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="{{ citizen.rejection_reason }}">
+                        Reason: {{ citizen.rejection_reason }}
+                    </div>
+                    {% endif %}
+                    {% else %}
+                    <span style="color: var(--text2); font-style: italic;">Awaiting review</span>
+                    {% endif %}
+                </td>
+                <td style="text-align: center;">
+                    <div style="display: flex; gap: 6px; justify-content: center; align-items: center; flex-wrap: wrap;">
+                        {# View Details Button #}
+                        <button type="button" class="btn btn-ghost" style="padding: 5px 10px; font-size: 12px;"
+                                onclick="openDetailsModal({{ citizen.id }})">
+                            👁 View Details
+                        </button>
+
+                        {# Approve Action Button #}
+                        {% if citizen.approval_status != 'approved' %}
+                        <button type="button" class="btn btn-success" style="padding: 5px 12px; font-size: 12px;"
+                                onclick="openApproveModal({{ citizen.id }}, '{{ citizen.full_name|escapejs }}')">
+                            ✓ Approve
+                        </button>
+                        {% endif %}
+
+                        {# Reject Action Button #}
+                        {% if citizen.approval_status != 'rejected' %}
+                        <button type="button" class="btn" style="padding: 5px 12px; font-size: 12px; background: rgba(239,68,68,.12); color: #f87171; border: 1px solid rgba(239,68,68,.3);"
+                                onclick="openRejectModal({{ citizen.id }}, '{{ citizen.full_name|escapejs }}')">
+                            ✗ Reject
+                        </button>
+                        {% endif %}
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{# ── PAGINATION ──────────────────────────────────────────────────────── #}
+{% if page_obj.has_other_pages %}
+<div class="pagination">
+    {% if page_obj.has_previous %}
+    <a href="?page={{ page_obj.previous_page_number }}&status={{ status_filter }}{% if search %}&search={{ search }}{% endif %}">« Previous</a>
+    {% endif %}
+
+    {% for num in page_obj.paginator.page_range %}
+        {% if page_obj.number == num %}
+        <span class="current">{{ num }}</span>
+        {% elif num > page_obj.number|add:'-3' and num < page_obj.number|add:'3' %}
+        <a href="?page={{ num }}&status={{ status_filter }}{% if search %}&search={{ search }}{% endif %}">{{ num }}</a>
+        {% endif %}
+    {% endfor %}
+
+    {% if page_obj.has_next %}
+    <a href="?page={{ page_obj.next_page_number }}&status={{ status_filter }}{% if search %}&search={{ search }}{% endif %}">Next »</a>
+    {% endif %}
+</div>
+{% endif %}
+
+{% else %}
+<div class="card" style="text-align: center; padding: 48px 24px;">
+    <div style="font-size: 40px; margin-bottom: 12px;">📭</div>
+    <h3 style="margin-bottom: 6px; font-size: 18px;">No citizen registrations found</h3>
+    <p style="color: var(--text2); font-size: 13.5px; max-width: 420px; margin: 0 auto 16px;">
+        {% if search %}
+        No applications match "{{ search }}". Try a different name or email search term.
+        {% elif status_filter == 'pending' %}
+        There are currently no citizen applications waiting for authority approval. Great job!
+        {% elif status_filter == 'approved' %}
+        No approved citizens found in this view.
+        {% elif status_filter == 'rejected' %}
+        No rejected registrations recorded.
+        {% else %}
+        No citizen registrations exist in the system yet.
+        {% endif %}
+    </p>
+    {% if search or status_filter != 'pending' %}
+    <a href="{% url 'authority:registrations' %}" class="btn btn-primary" style="display: inline-flex;">View Pending Registrations</a>
+    {% endif %}
+</div>
+{% endif %}
+
+{# ── MODAL: CITIZEN REGISTRATION DETAILS ─────────────────────────────── #}
+<div id="detailsModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 9999; align-items: center; justify-content: center; padding: 16px; backdrop-filter: blur(4px);">
+    <div class="card" style="width: 100%; max-width: 560px; max-height: 90vh; overflow-y: auto; padding: 24px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); border: 1px solid var(--border);">
+        <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); padding-bottom: 14px; margin-bottom: 18px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <span style="font-size: 24px;">👤</span>
+                <div>
+                    <h2 id="modalCitizenName" style="font-size: 18px; font-weight: 700; margin: 0;">Citizen Details</h2>
+                    <span id="modalCitizenId" style="font-size: 12px; color: var(--text2);">#ID</span>
+                </div>
+            </div>
+            <button type="button" onclick="closeModal('detailsModal')" style="background: none; border: none; font-size: 22px; color: var(--text2); cursor: pointer; padding: 4px;">✕</button>
+        </div>
+
+        <div id="modalLoading" style="text-align: center; padding: 32px 0;">
+            <p style="color: var(--text2);">Loading citizen details...</p>
+        </div>
+
+        <div id="modalContent" style="display: none;">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 18px;">
+                <div>
+                    <label style="font-size: 11.5px; color: var(--text2); font-weight: 600; text-transform: uppercase;">Email Address</label>
+                    <div id="modalEmail" style="font-size: 14px; font-weight: 500; margin-top: 2px;">—</div>
+                </div>
+                <div>
+                    <label style="font-size: 11.5px; color: var(--text2); font-weight: 600; text-transform: uppercase;">Phone Number</label>
+                    <div id="modalPhone" style="font-size: 14px; font-weight: 500; margin-top: 2px;">—</div>
+                </div>
+                <div>
+                    <label style="font-size: 11.5px; color: var(--text2); font-weight: 600; text-transform: uppercase;">Registration Date</label>
+                    <div id="modalDateJoined" style="font-size: 14px; font-weight: 500; margin-top: 2px;">—</div>
+                </div>
+                <div>
+                    <label style="font-size: 11.5px; color: var(--text2); font-weight: 600; text-transform: uppercase;">Preferred Language</label>
+                    <div id="modalLanguage" style="font-size: 14px; font-weight: 500; margin-top: 2px; text-transform: uppercase;">EN</div>
+                </div>
+                <div>
+                    <label style="font-size: 11.5px; color: var(--text2); font-weight: 600; text-transform: uppercase;">Approval Status</label>
+                    <div id="modalStatusBadge" style="margin-top: 4px;">—</div>
+                </div>
+                <div>
+                    <label style="font-size: 11.5px; color: var(--text2); font-weight: 600; text-transform: uppercase;">Issues Reported</label>
+                    <div id="modalReportsCount" style="font-size: 14px; font-weight: 500; margin-top: 2px;">0</div>
+                </div>
+            </div>
+
+            {# Audit block #}
+            <div id="modalAuditSection" class="ai-block" style="background: rgba(255,255,255,.03); border: 1px solid var(--border); margin-bottom: 20px;">
+                <div class="ai-block-title" style="color: var(--text2);">Review Audit Information</div>
+                <div style="font-size: 13px; line-height: 1.6;">
+                    <div>Reviewed by: <strong id="modalReviewedBy">—</strong></div>
+                    <div>Reviewed at: <strong id="modalReviewedAt">—</strong></div>
+                    <div id="modalReasonRow" style="display: none; margin-top: 6px; padding: 8px 10px; background: rgba(239,68,68,.1); border-radius: 6px; border: 1px solid rgba(239,68,68,.25); color: #f87171;">
+                        Rejection reason: <span id="modalRejectionReason">—</span>
+                    </div>
+                </div>
+            </div>
+
+            {# Action buttons inside modal #}
+            <div style="display: flex; gap: 10px; justify-content: flex-end; border-top: 1px solid var(--border); padding-top: 16px;">
+                <button type="button" class="btn btn-ghost" onclick="closeModal('detailsModal')">Close</button>
+                <button type="button" id="modalApproveBtn" class="btn btn-success" style="display: none;">✓ Approve</button>
+                <button type="button" id="modalRejectBtn" class="btn btn-danger" style="display: none;">✗ Reject</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# ── MODAL: APPROVE CONFIRMATION ──────────────────────────────────────── #}
+<div id="approveModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 9999; align-items: center; justify-content: center; padding: 16px; backdrop-filter: blur(4px);">
+    <div class="card" style="width: 100%; max-width: 440px; padding: 24px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); border: 1px solid var(--border);">
+        <h3 style="font-size: 18px; margin-bottom: 10px; color: #4ade80;">✓ Confirm Citizen Approval</h3>
+        <p style="font-size: 13.5px; color: var(--text); line-height: 1.5; margin-bottom: 20px;">
+            Are you sure you want to approve <strong id="approveModalName">this citizen</strong>?
+            Their account will be activated immediately, allowing them to log in and report issues.
+        </p>
+        <form id="approveForm" method="post" action="">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{{ request.get_full_path }}">
+            <div style="display: flex; justify-content: flex-end; gap: 10px;">
+                <button type="button" class="btn btn-ghost" onclick="closeModal('approveModal')">Cancel</button>
+                <button type="submit" class="btn btn-success">Confirm Approval</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{# ── MODAL: REJECT CONFIRMATION & REASON ──────────────────────────────── #}
+<div id="rejectModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 9999; align-items: center; justify-content: center; padding: 16px; backdrop-filter: blur(4px);">
+    <div class="card" style="width: 100%; max-width: 480px; padding: 24px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); border: 1px solid var(--border);">
+        <h3 style="font-size: 18px; margin-bottom: 8px; color: #f87171;">✗ Reject Citizen Registration</h3>
+        <p style="font-size: 13px; color: var(--text2); line-height: 1.5; margin-bottom: 16px;">
+            Rejecting <strong id="rejectModalName" style="color: var(--text);">this citizen</strong> will keep their account inactive and block them from logging in.
+        </p>
+        <form id="rejectForm" method="post" action="">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{{ request.get_full_path }}">
+            <div style="margin-bottom: 18px;">
+                <label for="rejectionReasonInput" style="display: block; font-size: 12.5px; font-weight: 600; margin-bottom: 6px; color: var(--text);">
+                    Rejection Reason (Optional):
+                </label>
+                <textarea id="rejectionReasonInput" name="rejection_reason" rows="3"
+                          placeholder="e.g. Incomplete profile details, outside municipal jurisdiction, or duplicate request..."
+                          style="width: 100%; padding: 10px 12px; border-radius: 8px; background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-family: inherit; font-size: 13px; resize: vertical;"></textarea>
+            </div>
+            <div style="display: flex; justify-content: flex-end; gap: 10px;">
+                <button type="button" class="btn btn-ghost" onclick="closeModal('rejectModal')">Cancel</button>
+                <button type="submit" class="btn btn-danger">Confirm Rejection</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    // Global modal helper
+    function closeModal(modalId) {
+        var modal = document.getElementById(modalId);
+        if (modal) modal.style.display = 'none';
+    }
+
+    // Close modal on click outside card or ESC key
+    window.addEventListener('click', function(e) {
+        ['detailsModal', 'approveModal', 'rejectModal'].forEach(function(id) {
+            var modal = document.getElementById(id);
+            if (modal && e.target === modal) {
+                modal.style.display = 'none';
+            }
+        });
+    });
+
+    window.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            ['detailsModal', 'approveModal', 'rejectModal'].forEach(function(id) {
+                closeModal(id);
+            });
+        }
+    });
+
+    function openApproveModal(userId, userName) {
+        document.getElementById('approveModalName').textContent = userName;
+        document.getElementById('approveForm').action = "/authority/registrations/" + userId + "/approve/";
+        document.getElementById('approveModal').style.display = 'flex';
+    }
+
+    function openRejectModal(userId, userName) {
+        document.getElementById('rejectModalName').textContent = userName;
+        document.getElementById('rejectForm').action = "/authority/registrations/" + userId + "/reject/";
+        document.getElementById('rejectionReasonInput').value = '';
+        document.getElementById('rejectModal').style.display = 'flex';
+    }
+
+    function openDetailsModal(userId) {
+        var modal = document.getElementById('detailsModal');
+        modal.style.display = 'flex';
+        document.getElementById('modalLoading').style.display = 'block';
+        document.getElementById('modalContent').style.display = 'none';
+
+        fetch('/authority/registrations/' + userId + '/')
+            .then(function(res) {
+                if (!res.ok) throw new Error('Failed to fetch details');
+                return res.json();
+            })
+            .then(function(data) {
+                document.getElementById('modalCitizenName').textContent = data.full_name;
+                document.getElementById('modalCitizenId').textContent = 'Citizen #' + data.id;
+                document.getElementById('modalEmail').textContent = data.email;
+                document.getElementById('modalPhone').textContent = data.phone || '—';
+                document.getElementById('modalDateJoined').textContent = data.date_joined;
+                document.getElementById('modalLanguage').textContent = (data.preferred_language || 'en').toUpperCase();
+                document.getElementById('modalReportsCount').textContent = data.reports_count || '0';
+
+                // Status badge
+                var badgeEl = document.getElementById('modalStatusBadge');
+                if (data.approval_status === 'approved') {
+                    badgeEl.innerHTML = '<span class="badge" style="background: rgba(34,197,94,.15); color: #4ade80; border: 1px solid rgba(34,197,94,.3);">✓ Approved</span>';
+                } else if (data.approval_status === 'rejected') {
+                    badgeEl.innerHTML = '<span class="badge" style="background: rgba(239,68,68,.15); color: #f87171; border: 1px solid rgba(239,68,68,.3);">✗ Rejected</span>';
+                } else {
+                    badgeEl.innerHTML = '<span class="badge" style="background: rgba(251,191,36,.15); color: #fbbf24; border: 1px solid rgba(251,191,36,.3);">⏳ Pending Approval</span>';
+                }
+
+                // Audit section
+                document.getElementById('modalReviewedBy').textContent = data.reviewed_by || 'Not yet reviewed';
+                document.getElementById('modalReviewedAt').textContent = data.reviewed_at || '—';
+
+                var reasonRow = document.getElementById('modalReasonRow');
+                if (data.rejection_reason) {
+                    reasonRow.style.display = 'block';
+                    document.getElementById('modalRejectionReason').textContent = data.rejection_reason;
+                } else {
+                    reasonRow.style.display = 'none';
+                }
+
+                // Action buttons inside details modal
+                var approveBtn = document.getElementById('modalApproveBtn');
+                var rejectBtn = document.getElementById('modalRejectBtn');
+
+                if (data.approval_status !== 'approved') {
+                    approveBtn.style.display = 'inline-flex';
+                    approveBtn.onclick = function() {
+                        closeModal('detailsModal');
+                        openApproveModal(data.id, data.full_name);
+                    };
+                } else {
+                    approveBtn.style.display = 'none';
+                }
+
+                if (data.approval_status !== 'rejected') {
+                    rejectBtn.style.display = 'inline-flex';
+                    rejectBtn.onclick = function() {
+                        closeModal('detailsModal');
+                        openRejectModal(data.id, data.full_name);
+                    };
+                } else {
+                    rejectBtn.style.display = 'none';
+                }
+
+                document.getElementById('modalLoading').style.display = 'none';
+                document.getElementById('modalContent').style.display = 'block';
+            })
+            .catch(function(err) {
+                document.getElementById('modalLoading').innerHTML = '<p style="color: #f87171;">Failed to load registration details.</p>';
+            });
+    }
+</script>
+{% endblock %}

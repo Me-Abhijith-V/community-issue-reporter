@@ -6,7 +6,7 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 <style>
-    #detail-map { height: 260px; border-radius: 8px; border: 1px solid var(--border); margin-top: 12px; }
+    #detail-map { height: 260px; min-height: 260px; width: 100%; border-radius: 8px; border: 1px solid var(--border); margin-top: 12px; background: #e2e8f0; position: relative; overflow: hidden; }
 
     /* Status timeline */
     .timeline { display: flex; flex-direction: column; gap: 0; }
@@ -197,15 +197,21 @@
         <div class="card" style="margin-bottom:18px">
             <h3 style="font-size:13px; font-weight:700; margin-bottom:10px; color:var(--text2); text-transform:uppercase; letter-spacing:.5px">📍 Location</h3>
 
-            {% if geocoded_address %}
-            <div style="font-size:15px; font-weight:600; margin-bottom:6px">{{ geocoded_address }}</div>
-            {% endif %}
+            <div style="font-size:15px; font-weight:600; margin-bottom:6px">
+                {% if issue.address %}
+                    {{ issue.address }}
+                {% elif geocoded_address %}
+                    {{ geocoded_address }}
+                {% else %}
+                    <span style="color:var(--text2); font-weight:400; font-style:italic">Address unavailable</span>
+                {% endif %}
+            </div>
 
             <div style="font-size:12px; color:var(--text2); margin-bottom:12px">
-                {{ issue.latitude }}, {{ issue.longitude }}
+                <span style="opacity:0.75">GPS:</span> {{ issue.latitude }}, {{ issue.longitude }}
                 <a href="https://www.google.com/maps?q={{ issue.latitude }},{{ issue.longitude }}"
                    target="_blank" rel="noopener"
-                   style="color:var(--accent); margin-left:8px; font-weight:600">↗ Google Maps</a>
+                   style="color:var(--accent); margin-left:8px; font-weight:600">↗ Open in Maps</a>
             </div>
 
             {% if issue.latitude and issue.longitude %}
@@ -431,23 +437,47 @@
 {# ── LEAFLET MINI-MAP ── #}
 {% if issue.latitude and issue.longitude %}
 <script>
-(function () {
-    const lat = {{ issue.latitude }};
-    const lng = {{ issue.longitude }};
+document.addEventListener('DOMContentLoaded', function () {
+    const lat = parseFloat("{{ issue.latitude|default:'' }}");
+    const lng = parseFloat("{{ issue.longitude|default:'' }}");
+
+    if (isNaN(lat) || isNaN(lng) || (lat === 0 && lng === 0) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        return;
+    }
+
+    const mapElement = document.getElementById('detail-map');
+    if (!mapElement) return;
+
+    const map = L.map('detail-map', {
+        center: [lat, lng],
+        zoom: 16,
+        zoomControl: true,
+        scrollWheelZoom: false,
+    });
+
+    const streetUrl = "{{ map_tile_url|default:tile_url|default:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}' }}";
+    const darkUrl = "{{ map_tile_dark_url|default:'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}' }}";
+    const attribution = '{{ map_tile_attribution|default:tile_attribution|default:"Tiles &copy; Esri"|safe }}';
+
     const isDark = (localStorage.getItem('auth-theme') || 'dark') === 'dark';
+    const initialUrl = isDark ? darkUrl : streetUrl;
 
-    const map = L.map('detail-map', { zoomControl: true, scrollWheelZoom: false })
-        .setView([lat, lng], 16);
-
-    const tileUrl = isDark
-        ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-        : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
-
-    L.tileLayer(tileUrl, {
-        attribution: '© OpenStreetMap contributors © CARTO',
-        subdomains: 'abcd',
-        maxZoom: 19
+    const tileLayer = L.tileLayer(initialUrl, {
+        attribution: attribution,
+        maxZoom: 19,
+        crossOrigin: true,
     }).addTo(map);
+
+    tileLayer.on('tileerror', function () {
+        console.warn('Mini-map tile failed to load, switching to fallback street tiles.');
+        if (initialUrl !== streetUrl) {
+            L.tileLayer(streetUrl, {
+                attribution: attribution,
+                maxZoom: 19,
+                crossOrigin: true,
+            }).addTo(map);
+        }
+    });
 
     const icon = L.divIcon({
         html: '<div style="width:16px;height:16px;border-radius:50%;background:#ef4444;border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.5)"></div>',
@@ -458,9 +488,24 @@
 
     L.marker([lat, lng], { icon })
         .addTo(map)
-        .bindPopup('Issue #{{ issue.id }}<br>{{ issue.category|capfirst }}')
+        .bindPopup('<strong>Issue #{{ issue.id }}</strong><br>{{ issue.category|capfirst }}')
         .openPopup();
-})();
+
+    function invalidateMiniMap() {
+        if (map) map.invalidateSize();
+    }
+
+    invalidateMiniMap();
+    setTimeout(invalidateMiniMap, 150);
+    setTimeout(invalidateMiniMap, 500);
+
+    window.addEventListener('resize', invalidateMiniMap);
+    window.addEventListener('themechange', invalidateMiniMap);
+
+    if (window.ResizeObserver) {
+        new ResizeObserver(invalidateMiniMap).observe(mapElement);
+    }
+});
 </script>
 {% endif %}
 

@@ -77,13 +77,28 @@ class IssueService {
     required File photo,
     required double latitude,
     required double longitude,
+    String? address,
     required bool wasVoiceInput,
+    String? aiSuggestedCategory,
+    String? aiSeverity,
+    String? aiSeverityBasis,
+    String? aiSeverityReason,
+    String? aiValidationStatus,
+    bool? aiIsImageMatch,
+    String? aiImageMatchReason,
+    String? detectedLanguage,
+    String? translatedDescription,
+    bool? aiIsDuplicate,
+    int? aiDuplicateOf,
+    String? aiDuplicateReason,
   }) async {
     try {
-      final formData = FormData.fromMap({
+      final mapData = <String, dynamic>{
         'original_description': description,
         'latitude': latitude.toString(),
         'longitude': longitude.toString(),
+        if (address != null && address.trim().isNotEmpty)
+          'address': address.trim(),
         'was_voice_input': wasVoiceInput.toString(),
         'photo': await MultipartFile.fromFile(
           photo.path,
@@ -91,7 +106,46 @@ class IssueService {
             Platform.pathSeparator,
           ).last,
         ),
-      });
+      };
+
+      if (aiSuggestedCategory != null && aiSuggestedCategory.isNotEmpty) {
+        mapData['ai_suggested_category'] = aiSuggestedCategory;
+      }
+      if (aiSeverity != null && aiSeverity.isNotEmpty) {
+        mapData['ai_severity'] = aiSeverity;
+      }
+      if (aiSeverityBasis != null && aiSeverityBasis.isNotEmpty) {
+        mapData['ai_severity_basis'] = aiSeverityBasis;
+      }
+      if (aiSeverityReason != null && aiSeverityReason.isNotEmpty) {
+        mapData['ai_severity_reason'] = aiSeverityReason;
+      }
+      if (aiValidationStatus != null && aiValidationStatus.isNotEmpty) {
+        mapData['ai_validation_status'] = aiValidationStatus;
+      }
+      if (aiIsImageMatch != null) {
+        mapData['ai_is_image_match'] = aiIsImageMatch;
+      }
+      if (aiImageMatchReason != null && aiImageMatchReason.isNotEmpty) {
+        mapData['ai_image_match_reason'] = aiImageMatchReason;
+      }
+      if (detectedLanguage != null && detectedLanguage.isNotEmpty) {
+        mapData['detected_language'] = detectedLanguage;
+      }
+      if (translatedDescription != null && translatedDescription.isNotEmpty) {
+        mapData['translated_description'] = translatedDescription;
+      }
+      if (aiIsDuplicate != null) {
+        mapData['ai_is_duplicate'] = aiIsDuplicate;
+      }
+      if (aiDuplicateOf != null) {
+        mapData['ai_duplicate_of'] = aiDuplicateOf;
+      }
+      if (aiDuplicateReason != null && aiDuplicateReason.isNotEmpty) {
+        mapData['ai_duplicate_reason'] = aiDuplicateReason;
+      }
+
+      final formData = FormData.fromMap(mapData);
 
       final response =
       await _requestWithTokenRefresh(
@@ -198,7 +252,6 @@ class IssueService {
         e,
         fallback: 'Failed to load your reports.',
       );
-      rethrow;
     }
   }
 
@@ -257,7 +310,6 @@ class IssueService {
         e,
         fallback: 'Failed to load community issues.',
       );
-      rethrow;
     }
   }
 
@@ -312,10 +364,12 @@ class IssueService {
   // ============================================================
 
   /// Calls /issues/classify/ to get AI analysis before
-  /// submitting. Returns category, severity, language,
-  /// translation, and duplicate detection results.
+  /// submitting. Returns category, severity, severity_basis,
+  /// severity_reason, validation_status, is_image_match,
+  /// image_match_reason, language, translation, and duplicate results.
   Future<Map<String, dynamic>> classifyIssue({
     required String description,
+    File? photo,
     double? nearbyLatitude,
     double? nearbyLongitude,
     double radiusKm = 0.5,
@@ -340,19 +394,39 @@ class IssueService {
         }
       }
 
+      dynamic postData;
+      String contentType = 'application/json';
+
+      if (photo != null) {
+        contentType = 'multipart/form-data';
+        final mapData = <String, dynamic>{
+          'description': description,
+          'nearby_issue_ids': nearbyIds.join(','),
+          'photo': await MultipartFile.fromFile(
+            photo.path,
+            filename: photo.path.split(
+              Platform.pathSeparator,
+            ).last,
+          ),
+        };
+        postData = FormData.fromMap(mapData);
+      } else {
+        postData = {
+          'description': description,
+          'nearby_issue_ids': nearbyIds,
+        };
+      }
+
       final response =
       await _requestWithTokenRefresh(
         request: (token) {
           return _dio.post(
             '/issues/classify/',
-            data: {
-              'description': description,
-              'nearby_issue_ids': nearbyIds,
-            },
+            data: postData,
             options: Options(
               headers: {
                 'Authorization': 'Bearer $token',
-                'Content-Type': 'application/json',
+                'Content-Type': contentType,
               },
             ),
           );
@@ -377,7 +451,6 @@ class IssueService {
         e,
         fallback: 'AI classification failed.',
       );
-      rethrow;
     }
   }
 
@@ -412,7 +485,6 @@ class IssueService {
         e,
         fallback: 'Failed to load map issues.',
       );
-      rethrow;
     }
   }
 
@@ -457,7 +529,6 @@ class IssueService {
         e,
         fallback: 'Failed to update upvote.',
       );
-      rethrow;
     }
   }
 
@@ -502,7 +573,6 @@ class IssueService {
         e,
         fallback: 'Failed to remove upvote.',
       );
-      rethrow;
     }
   }
 
@@ -530,7 +600,6 @@ class IssueService {
     } on DioException catch (e) {
       debugPrint('Fetching upvoted issues failed: ${e.response?.data}');
       _throwDioException(e, fallback: 'Failed to load upvoted issues.');
-      rethrow;
     }
   }
 
@@ -575,7 +644,6 @@ class IssueService {
         e,
         fallback: 'Failed to load issue.',
       );
-      rethrow;
     }
   }
 
@@ -639,7 +707,6 @@ class IssueService {
         e,
         fallback: 'Failed to load status history.',
       );
-      rethrow;
     }
   }
 
@@ -672,6 +739,44 @@ class IssueService {
     throw Exception(
       'Unexpected response from server.',
     );
+  }
+
+  // ============================================================
+  // BACKEND REVERSE GEOCODING (FALLBACK)
+  // ============================================================
+
+  Future<String?> reverseGeocodeViaBackend({
+    required double latitude,
+    required double longitude,
+  }) async {
+    try {
+      final response = await _requestWithTokenRefresh(
+        request: (token) {
+          return _dio.get(
+            '/issues/reverse-geocode/',
+            queryParameters: {
+              'latitude': latitude,
+              'longitude': longitude,
+            },
+            options: Options(
+              headers: {
+                'Authorization': 'Bearer $token',
+              },
+            ),
+          );
+        },
+      );
+
+      if (response.statusCode == 200 && response.data is Map) {
+        final addr = response.data['address']?.toString().trim();
+        if (addr != null && addr.isNotEmpty) {
+          return addr;
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
   }
 
   // ============================================================

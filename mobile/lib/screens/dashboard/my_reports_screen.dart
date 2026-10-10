@@ -125,6 +125,12 @@ class _MyReportsScreenState
           : int.tryParse(id.toString());
       if (idInt == null) continue;
 
+      final storedAddr = issue['address']?.toString().trim();
+      if (storedAddr != null && storedAddr.isNotEmpty) {
+        _addressCache[idInt] = storedAddr;
+        continue;
+      }
+
       if (_addressCache.containsKey(idInt)) {
         continue;
       }
@@ -143,13 +149,18 @@ class _MyReportsScreenState
           await _locationService.reverseGeocode(
         latitude: lat,
         longitude: lng,
+        issueService: _issueService,
       );
 
       if (!mounted) return;
 
-      if (address != null) {
+      if (address != null && address.isNotEmpty) {
         setState(() {
           _addressCache[idInt] = address;
+        });
+      } else {
+        setState(() {
+          _addressCache[idInt] = 'Address unavailable';
         });
       }
     }
@@ -243,6 +254,11 @@ class _MyReportsScreenState
   String _locationDisplay(
     Map<String, dynamic> issue,
   ) {
+    final addr = issue['address']?.toString().trim();
+    if (addr != null && addr.isNotEmpty) {
+      return addr;
+    }
+
     final id = issue['id'];
     final idInt = id is int
         ? id
@@ -257,12 +273,10 @@ class _MyReportsScreenState
     final lng = issue['longitude'];
 
     if (lat != null && lng != null) {
-      // Show coords while resolving
-      return '${double.tryParse(lat.toString())?.toStringAsFixed(5) ?? lat}, '
-          '${double.tryParse(lng.toString())?.toStringAsFixed(5) ?? lng}';
+      return 'Resolving location…';
     }
 
-    return 'Unknown location';
+    return 'Location unavailable';
   }
 
   // ============================================================

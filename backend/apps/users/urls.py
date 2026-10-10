@@ -9,6 +9,8 @@ from .views import (
     ReputationView,
     ApproveUserView,
     RejectUserView,
+    RegistrationListView,
+    RegistrationDetailView,
     CustomTokenObtainPairView,
 )
 
@@ -66,5 +68,27 @@ urlpatterns = [
         'users/<int:pk>/reject/',
         RejectUserView.as_view(),
         name='user_reject'
+    ),
+
+    # Dedicated registration management endpoints
+    path(
+        'users/registrations/',
+        RegistrationListView.as_view(),
+        name='registration_list'
+    ),
+    path(
+        'users/registrations/<int:pk>/',
+        RegistrationDetailView.as_view(),
+        name='registration_detail'
+    ),
+    path(
+        'users/registrations/<int:pk>/approve/',
+        ApproveUserView.as_view(),
+        name='registration_approve'
+    ),
+    path(
+        'users/registrations/<int:pk>/reject/',
+        RejectUserView.as_view(),
+        name='registration_reject'
     ),
 ]

@@ -7,6 +7,7 @@ class IssueModel {
   final String status;
   final double latitude;
   final double longitude;
+  final String address;
   final String? photo;
   final int upvoteCount;
   final bool wasVoiceInput;
@@ -25,6 +26,7 @@ class IssueModel {
     required this.status,
     required this.latitude,
     required this.longitude,
+    this.address = '',
     required this.photo,
     required this.upvoteCount,
     required this.wasVoiceInput,
@@ -71,6 +73,8 @@ class IssueModel {
         json['longitude']?.toString() ?? '',
       ) ??
           0.0,
+
+      address: json['address']?.toString() ?? '',
 
       photo: json['photo']?.toString(),
 

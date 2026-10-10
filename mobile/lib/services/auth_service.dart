@@ -45,9 +45,13 @@ class AuthService {
           }
 
           if (errorCode == 'registration_rejected') {
+            final reason = data['rejection_reason']?.toString();
             throw RegistrationRejectedException(
               detail ??
                   'Your registration has been rejected by the authority.',
+              rejectionReason: (reason != null && reason.trim().isNotEmpty)
+                  ? reason.trim()
+                  : null,
             );
           }
 
@@ -164,7 +168,8 @@ class PendingApprovalException implements Exception {
 
 class RegistrationRejectedException implements Exception {
   final String message;
-  const RegistrationRejectedException(this.message);
+  final String? rejectionReason;
+  const RegistrationRejectedException(this.message, {this.rejectionReason});
 
   @override
   String toString() => message;

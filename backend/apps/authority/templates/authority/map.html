@@ -4,38 +4,148 @@
 {% block extra_head %}
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<style>
+    #authority-map {
+        width: 100%;
+        height: 600px;
+        min-height: 480px;
+        border-radius: var(--radius, 12px);
+        border: 1px solid var(--border, #334155);
+        position: relative;
+        background: #e2e8f0;
+        overflow: hidden;
+        z-index: 1;
+    }
+    .map-filter-bar {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+        margin-bottom: 14px;
+    }
+    .map-filter-bar input, .map-filter-bar select {
+        padding: 7px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--border, #334155);
+        background: var(--surface2, #1e293b);
+        color: var(--text, #f8fafc);
+        font-size: 13px;
+        outline: none;
+    }
+    .map-legend-card {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        align-items: center;
+        font-size: 13px;
+        padding: 10px 16px;
+        margin-bottom: 12px;
+    }
+    .map-notice-banner {
+        display: none;
+        margin-bottom: 12px;
+        background: #451a03;
+        color: #fed7aa;
+        border: 1px solid #b45309;
+        border-radius: 8px;
+        padding: 10px 14px;
+        font-size: 13px;
+        align-items: center;
+        justify-content: space-between;
+    }
+</style>
 {% endblock %}
 
 {% block content %}
 <div class="page-header">
     <h1>Map View</h1>
-    <p>All reported issues shown on map. Click a marker for details.</p>
+    <p>All reported issues geolocated across your jurisdiction. Click any marker to view details.</p>
 </div>
 
-<div class="card" style="margin-bottom:16px; padding:12px 16px">
-    <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:center; font-size:13px">
-        <strong>Legend:</strong>
-        <span>🔴 Reported</span>
-        <span>🟠 In Progress</span>
-        <span>🟢 Resolved</span>
-        <span>⚫ Closed</span>
-        <span style="margin-left:auto; color:#94a3b8">{{ map_data|length }} issue{{ map_data|length|pluralize }} on map</span>
-    </div>
+<!-- Filters -->
+<form method="get" class="map-filter-bar">
+    <input type="text" name="search" placeholder="Search description, address, #ID..." value="{{ search }}" style="min-width: 200px;">
+    
+    <select name="category">
+        <option value="">All Categories</option>
+        {% for cat_key, cat_label in category_choices %}
+        <option value="{{ cat_key }}" {% if category == cat_key %}selected{% endif %}>{{ cat_label }}</option>
+        {% endfor %}
+    </select>
+
+    <select name="status">
+        <option value="">All Statuses</option>
+        {% for st_key, st_label in status_choices %}
+        <option value="{{ st_key }}" {% if status == st_key %}selected{% endif %}>{{ st_label }}</option>
+        {% endfor %}
+    </select>
+
+    <select name="severity">
+        <option value="">All Severities</option>
+        {% for sv_key, sv_label in severity_choices %}
+        <option value="{{ sv_key }}" {% if severity == sv_key %}selected{% endif %}>{{ sv_label }}</option>
+        {% endfor %}
+    </select>
+
+    <button type="submit" class="btn btn-primary" style="font-size: 13px; padding: 7px 14px;">Filter</button>
+    {% if search or category or status or severity %}
+    <a href="{% url 'authority:map' %}" class="btn btn-secondary" style="font-size: 13px; padding: 7px 14px; text-decoration: none;">Reset</a>
+    {% endif %}
+</form>
+
+<!-- Legend & Counts -->
+<div class="card map-legend-card">
+    <strong>Legend:</strong>
+    <span>🔴 Reported</span>
+    <span>🟠 In Progress</span>
+    <span>🟢 Resolved</span>
+    <span>⚫ Closed</span>
+    <span style="margin-left: auto; display: flex; gap: 8px; align-items: center;">
+        <span class="badge" style="background: #1e3a8a; color: #93c5fd; padding: 3px 8px; border-radius: 999px; font-weight: 600;">
+            📍 {{ mapped_count }} mapped
+        </span>
+        {% if unmapped_count > 0 %}
+        <span class="badge" style="background: #451a03; color: #fed7aa; padding: 3px 8px; border-radius: 999px; font-weight: 600;" title="Issues lacking valid GPS coordinates">
+            ⚠️ {{ unmapped_count }} missing coordinates
+        </span>
+        {% endif %}
+    </span>
 </div>
 
+<!-- Notice banner (tile warning or error) -->
+<div id="map-notice-banner" class="map-notice-banner">
+    <span id="map-notice-text">⚠️ Some map tiles could not be loaded. Please check your internet connection or switch tile providers.</span>
+    <button type="button" onclick="document.getElementById('map-notice-banner').style.display='none'" style="background: none; border: none; color: #fed7aa; cursor: pointer; font-size: 16px; margin-left: 10px;">&times;</button>
+</div>
+
+<!-- Map container -->
 <div id="authority-map"></div>
 
+<!-- Issue details card when marker clicked -->
 <div id="issue-popup" style="display:none; background:#1e293b; border:1px solid #475569; border-radius:10px; padding:16px; margin-top:16px">
     <div id="popup-content"></div>
 </div>
 
-<script>
-    // ── Parse issues from Django context ──
-    const issues = {{ map_data|safe }};
+<!-- Safely embedded map data JSON -->
+<script id="map-data" type="application/json">
+{{ map_data|safe }}
+</script>
 
-    // ── Color helpers ──
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    // ── 1. Safely Parse Issues ──
+    let issues = [];
+    try {
+        const rawJson = document.getElementById('map-data').textContent;
+        issues = JSON.parse(rawJson);
+    } catch (e) {
+        console.error('Failed to parse map data JSON:', e);
+        showNotice('Failed to parse issue location data from server.');
+    }
+
+    // ── 2. Color helpers ──
     function statusColor(status) {
-        switch (status) {
+        switch ((status || '').toLowerCase()) {
             case 'reported':    return '#ef4444';
             case 'in_progress': return '#f97316';
             case 'resolved':    return '#22c55e';
@@ -45,7 +155,7 @@
     }
 
     function severityColor(severity) {
-        switch (severity) {
+        switch ((severity || '').toLowerCase()) {
             case 'critical': return '#ef4444';
             case 'high':     return '#f97316';
             case 'medium':   return '#f59e0b';
@@ -54,45 +164,109 @@
         }
     }
 
-    // ── Custom marker icon ──
     function makeIcon(color) {
         return L.divIcon({
-            html: `<div style="width:14px;height:14px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.6)"></div>`,
+            html: `<div style="width:16px;height:16px;border-radius:50%;background:${color};border:2px solid #ffffff;box-shadow:0 2px 5px rgba(0,0,0,0.6);transition:transform 0.15s ease;"></div>`,
             className: '',
-            iconSize: [14, 14],
-            iconAnchor: [7, 7],
+            iconSize: [16, 16],
+            iconAnchor: [8, 8],
         });
     }
 
-    // ── Determine initial center ──
-    let defaultLat = 10.8505;
-    let defaultLng = 76.2711;
-
-    if (issues.length > 0) {
-        defaultLat = parseFloat(issues[0].latitude);
-        defaultLng = parseFloat(issues[0].longitude);
+    function showNotice(msg) {
+        const banner = document.getElementById('map-notice-banner');
+        const text = document.getElementById('map-notice-text');
+        if (banner && text) {
+            text.textContent = msg;
+            banner.style.display = 'flex';
+        }
     }
 
-    // ── Initialise Leaflet map ──
+    // ── 3. Coordinate validation & initial center ──
+    function isValidCoordinate(lat, lng) {
+        return (
+            typeof lat === 'number' && !isNaN(lat) && lat >= -90 && lat <= 90 &&
+            typeof lng === 'number' && !isNaN(lng) && lng >= -180 && lng <= 180 &&
+            !(lat === 0 && lng === 0)
+        );
+    }
+
+    const validIssues = issues.filter(i => isValidCoordinate(parseFloat(i.latitude), parseFloat(i.longitude)));
+
+    let defaultCenter = [8.5241, 76.9366]; // Kerala default
+    let defaultZoom = 12;
+
+    if (validIssues.length > 0) {
+        defaultCenter = [parseFloat(validIssues[0].latitude), parseFloat(validIssues[0].longitude)];
+    }
+
+    // ── 4. Initialise Leaflet Map ──
+    const mapElement = document.getElementById('authority-map');
+    if (!mapElement) return;
+
     const map = L.map('authority-map', {
-        center: [defaultLat, defaultLng],
-        zoom: 13,
+        center: defaultCenter,
+        zoom: defaultZoom,
         zoomControl: true,
+        attributionControl: true,
     });
 
-    // ── Dark tile layer ──
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        attribution: '© OpenStreetMap contributors © CARTO',
-        subdomains: 'abcd',
-        maxZoom: 19
-    }).addTo(map);
+    // ── 5. Define Tile Providers (Shared Configuration: Esri World Street Map, Dark Canvas, Topographic) ──
+    const streetUrl = "{{ map_tile_url|default:tile_url|default:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}' }}";
+    const topoUrl = "{{ map_tile_topo_url|default:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}' }}";
+    const darkUrl = "{{ map_tile_dark_url|default:'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}' }}";
+    const attribution = '{{ map_tile_attribution|default:tile_attribution|default:"Tiles &copy; Esri &mdash; Source: Esri, DeLorme, NAVTEQ, USGS"|safe }}';
 
-    // ── Add markers ──
-    issues.forEach(issue => {
+    const streetLayer = L.tileLayer(streetUrl, {
+        attribution: attribution,
+        maxZoom: 19,
+        crossOrigin: true,
+    });
+
+    const topoLayer = L.tileLayer(topoUrl, {
+        attribution: attribution,
+        maxZoom: 19,
+        crossOrigin: true,
+    });
+
+    const darkLayer = L.tileLayer(darkUrl, {
+        attribution: attribution,
+        maxZoom: 19,
+        crossOrigin: true,
+    });
+
+    // Default layer: Street Map (or Dark Canvas if dark theme preferred)
+    const isDark = !document.body.classList.contains('light');
+    const defaultLayer = isDark ? darkLayer : streetLayer;
+    defaultLayer.addTo(map);
+
+    const baseLayers = {
+        "Street Map (Standard)": streetLayer,
+        "Dark Canvas (Night)": darkLayer,
+        "Topographic": topoLayer,
+    };
+
+    L.control.layers(baseLayers, null, { position: 'topright' }).addTo(map);
+
+    // ── 6. Tile Error Monitoring ──
+    let tileErrorNotified = false;
+    [streetLayer, darkLayer, topoLayer].forEach(layer => {
+        layer.on('tileerror', function (err) {
+            if (!tileErrorNotified) {
+                tileErrorNotified = true;
+                console.warn('Map tile failed to load:', err);
+                showNotice('Some map tiles could not load from the tile server. You can switch tile layers via the top-right control.');
+            }
+        });
+    });
+
+    // ── 7. Render Markers ──
+    const markerBounds = [];
+
+    validIssues.forEach(issue => {
         const lat = parseFloat(issue.latitude);
         const lng = parseFloat(issue.longitude);
-
-        if (isNaN(lat) || isNaN(lng)) return;
+        markerBounds.push([lat, lng]);
 
         const color = statusColor(issue.status);
         const marker = L.marker([lat, lng], { icon: makeIcon(color) }).addTo(map);
@@ -101,46 +275,93 @@
             const popup = document.getElementById('issue-popup');
             const content = document.getElementById('popup-content');
 
+            const categoryName = issue.category ? (issue.category.charAt(0).toUpperCase() + issue.category.slice(1)) : 'Unknown';
+            const statusLabel = (issue.status || '').replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+            const severityLabel = issue.severity ? (issue.severity.charAt(0).toUpperCase() + issue.severity.slice(1)) : '';
+            const sevColor = severityColor(issue.severity);
+
             content.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px">
                     <div>
                         <a href="/authority/issues/${issue.id}/" style="font-size:16px; font-weight:700; color:#3b82f6; text-decoration:none">Issue #${issue.id}</a>
-                        <div style="font-size:12px; color:#94a3b8; margin-top:2px">${issue.category ? issue.category.charAt(0).toUpperCase() + issue.category.slice(1) : 'Unknown'}</div>
+                        <div style="font-size:12px; color:#94a3b8; margin-top:2px">${categoryName}</div>
                     </div>
                     <button onclick="document.getElementById('issue-popup').style.display='none'"
-                            style="background:none; border:none; color:#94a3b8; cursor:pointer; font-size:18px; line-height:1">×</button>
+                            style="background:none; border:none; color:#94a3b8; cursor:pointer; font-size:20px; line-height:1">&times;</button>
                 </div>
-                <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px">
-                    <span style="padding:3px 8px; border-radius:999px; font-size:11px; font-weight:700; background:${color}20; color:${color}; border:1px solid ${color}40">
-                        ${(issue.status || '').replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px">
+                    <span style="padding:3px 9px; border-radius:999px; font-size:11px; font-weight:700; background:${color}20; color:${color}; border:1px solid ${color}40">
+                        ${statusLabel}
                     </span>
-                    ${issue.severity ? `<span style="padding:3px 8px; border-radius:999px; font-size:11px; font-weight:700; background:${severityColor(issue.severity)}20; color:${severityColor(issue.severity)}; border:1px solid ${severityColor(issue.severity)}40">⚠ ${issue.severity.charAt(0).toUpperCase() + issue.severity.slice(1)}</span>` : ''}
+                    ${severityLabel ? `<span style="padding:3px 9px; border-radius:999px; font-size:11px; font-weight:700; background:${sevColor}20; color:${sevColor}; border:1px solid ${sevColor}40">⚠ ${severityLabel}</span>` : ''}
+                    ${issue.is_duplicate ? `<span style="padding:3px 9px; border-radius:999px; font-size:11px; font-weight:700; background:#f59e0b20; color:#f59e0b; border:1px solid #f59e0b40">Duplicate</span>` : ''}
                 </div>
-                <div style="font-size:13px; color:#94a3b8">
+                <div style="font-size:13px; color:#cbd5e1; margin-bottom:6px">
+                    📍 <strong>${issue.address ? issue.address : 'Address unavailable'}</strong>
+                </div>
+                <div style="font-size:12px; color:#94a3b8">
                     👍 ${issue.upvotes || 0} upvote${issue.upvotes !== 1 ? 's' : ''} &nbsp;|&nbsp;
-                    📍 ${lat.toFixed(5)}, ${lng.toFixed(5)}
+                    <span style="opacity:0.8">GPS: ${lat.toFixed(5)}, ${lng.toFixed(5)}</span>
                 </div>
-                <div style="margin-top:12px">
-                    <a href="/authority/issues/${issue.id}/" class="btn btn-primary" style="font-size:12px; text-decoration:none; display:inline-flex; align-items:center; gap:4px">View Details →</a>
+                <div style="margin-top:14px">
+                    <a href="/authority/issues/${issue.id}/" class="btn btn-primary" style="font-size:12px; text-decoration:none; display:inline-flex; align-items:center; gap:4px">View Details &rarr;</a>
                 </div>
             `;
 
             popup.style.display = 'block';
-
-            // Smooth scroll to popup
             popup.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         });
     });
 
-    // ── Fit map to markers if there are issues ──
-    if (issues.length > 0) {
-        const coords = issues
-            .map(i => [parseFloat(i.latitude), parseFloat(i.longitude)])
-            .filter(([la, lo]) => !isNaN(la) && !isNaN(lo));
-
-        if (coords.length > 0) {
-            map.fitBounds(coords, { padding: [30, 30], maxZoom: 15 });
+    // ── 8. Fit Bounds Safely ──
+    if (markerBounds.length > 0) {
+        if (markerBounds.length === 1) {
+            map.setView(markerBounds[0], 14);
+        } else {
+            const first = markerBounds[0];
+            const allSame = markerBounds.every(pt => Math.abs(pt[0] - first[0]) < 0.0001 && Math.abs(pt[1] - first[1]) < 0.0001);
+            if (allSame) {
+                map.setView(first, 14);
+            } else {
+                map.fitBounds(markerBounds, { padding: [40, 40], maxZoom: 15 });
+            }
         }
     }
+
+    // ── 9. Robust Map Resizing & Visibility Invalidation ──
+    function invalidateMap() {
+        if (map) {
+            map.invalidateSize();
+        }
+    }
+
+    invalidateMap();
+    setTimeout(invalidateMap, 150);
+    setTimeout(invalidateMap, 500);
+
+    window.addEventListener('resize', invalidateMap);
+    window.addEventListener('themechange', function (evt) {
+        const isDarkTheme = evt.detail ? evt.detail.isDark : !document.body.classList.contains('light');
+        if (isDarkTheme) {
+            if (map.hasLayer(streetLayer)) {
+                map.removeLayer(streetLayer);
+                darkLayer.addTo(map);
+            }
+        } else {
+            if (map.hasLayer(darkLayer)) {
+                map.removeLayer(darkLayer);
+                streetLayer.addTo(map);
+            }
+        }
+        invalidateMap();
+    });
+
+    if (window.ResizeObserver) {
+        const ro = new ResizeObserver(() => {
+            invalidateMap();
+        });
+        ro.observe(mapElement);
+    }
+});
 </script>
 {% endblock %}

@@ -8,6 +8,7 @@ from .views import (
     StatusHistoryView,
     IssueMapView,
     ClassifyIssueView,
+    ReverseGeocodeView,
 )
 
 urlpatterns = [
@@ -15,6 +16,12 @@ urlpatterns = [
         '',
         IssueListCreateView.as_view(),
         name='issue-list-create'
+    ),
+
+    path(
+        'reverse-geocode/',
+        ReverseGeocodeView.as_view(),
+        name='reverse-geocode'
     ),
 
     path(

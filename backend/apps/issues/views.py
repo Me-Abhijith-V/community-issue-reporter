@@ -1,8 +1,10 @@
+import json
 from decimal import Decimal
 
 from django.db.models import Q
 
 from rest_framework import generics, status
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -166,117 +168,161 @@ class IssueListCreateView(generics.ListCreateAPIView):
 
         return queryset
 
-    def perform_create(self, serializer):
-        # -------------------------------------------------
-        # 1. SAVE THE ISSUE
-        # -------------------------------------------------
-        issue = serializer.save(
-            reported_by=self.request.user
-        )
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
-        description = issue.original_description
+        description = serializer.validated_data.get("original_description", "").strip()
+        photo = request.FILES.get("photo")
 
         # -------------------------------------------------
-        # 2. FIND NEARBY ISSUE IDs FOR DUPLICATE CHECK
+        # 1. ENFORCE DESCRIPTION-IMAGE MISMATCH VALIDATION
         # -------------------------------------------------
-        nearby_issues = Issue.objects.none()
-
-        if (
-            issue.latitude is not None
-            and issue.longitude is not None
-        ):
-            latitude_range = Decimal("0.005")   # ~500 m
-            longitude_range = Decimal("0.005")
-
-            nearby_issues = (
-                Issue.objects.filter(
-                    latitude__gte=(
-                        issue.latitude - latitude_range
-                    ),
-                    latitude__lte=(
-                        issue.latitude + latitude_range
-                    ),
-                    longitude__gte=(
-                        issue.longitude - longitude_range
-                    ),
-                    longitude__lte=(
-                        issue.longitude + longitude_range
-                    ),
-                )
-                .exclude(id=issue.id)
-                .order_by("-created_at")
+        # Check if caller already supplied pre-classified validation status
+        pre_val = serializer.validated_data.get("ai_validation_status")
+        if pre_val == "mismatch":
+            reason = (
+                serializer.validated_data.get("ai_image_match_reason")
+                or "The uploaded photo depicts an unrelated subject or a different issue."
+            )
+            return Response(
+                {
+                    "error": "Invalid report: Description and image do not match.",
+                    "validation_status": "mismatch",
+                    "is_image_match": False,
+                    "image_match_reason": reason,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        nearby_issue_ids = list(
-            nearby_issues.values_list("id", flat=True)[:10]
-        )
+        pre_cat = serializer.validated_data.get("ai_suggested_category")
+        pre_sev = serializer.validated_data.get("ai_severity")
 
-        # -------------------------------------------------
-        # 3. FULL AI CLASSIFICATION (language, translate,
-        #    category, severity, duplicate detection)
-        # -------------------------------------------------
-        if description:
+        ai_result = None
+        # If pre-classified AI results were NOT supplied, run classification with image
+        if not (pre_cat and pre_sev) and description:
+            lat = serializer.validated_data.get("latitude")
+            lng = serializer.validated_data.get("longitude")
+            nearby_issues = Issue.objects.none()
+            if lat is not None and lng is not None:
+                lat_range = Decimal("0.005")
+                lng_range = Decimal("0.005")
+                nearby_issues = Issue.objects.filter(
+                    latitude__gte=lat - lat_range,
+                    latitude__lte=lat + lat_range,
+                    longitude__gte=lng - lng_range,
+                    longitude__lte=lng + lng_range,
+                ).order_by("-created_at")[:10]
+
+            nearby_ids = list(nearby_issues.values_list("id", flat=True))
+
             try:
                 ai_result = classify_issue(
                     description,
-                    nearby_issue_ids=nearby_issue_ids,
+                    image_file=photo,
+                    nearby_issues=list(nearby_issues[:5]),
+                    nearby_issue_ids=nearby_ids,
                 )
             except Exception:
                 ai_result = None
 
-            if ai_result:
-                # AI category
-                category = ai_result.get("category")
-                if category:
-                    issue.ai_suggested_category = category
-                    issue.category = category
-
-                # AI severity
-                severity = ai_result.get("severity")
-                if severity:
-                    issue.ai_severity = severity
-
-                # Detected language
-                detected_language = ai_result.get("detected_language")
-                if detected_language:
-                    issue.detected_language = detected_language
-
-                # English translation
-                translated_description = ai_result.get(
-                    "translated_description"
+            # Backend enforcement: Reject if mismatch detected
+            if ai_result and ai_result.get("ai_success") and ai_result.get("validation_status") == "mismatch":
+                reason = (
+                    ai_result.get("image_match_reason")
+                    or "The uploaded photo depicts an unrelated subject or a different issue."
                 )
-                if translated_description:
-                    issue.translated_description = translated_description
+                return Response(
+                    {
+                        "error": "Invalid report: Description and image do not match.",
+                        "validation_status": "mismatch",
+                        "is_image_match": False,
+                        "image_match_reason": reason,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
-                # Duplicate detection
-                is_duplicate = ai_result.get("is_duplicate", False)
-                issue.ai_is_duplicate = is_duplicate
+        # -------------------------------------------------
+        # 2. SAVE THE ISSUE
+        # -------------------------------------------------
+        issue = serializer.save(reported_by=request.user)
 
-                duplicate_id = ai_result.get("duplicate_of")
-                if is_duplicate and duplicate_id:
-                    try:
-                        issue.ai_duplicate_of = Issue.objects.get(
-                            id=duplicate_id
-                        )
-                    except Issue.DoesNotExist:
-                        issue.ai_duplicate_of = None
-                else:
+        # -------------------------------------------------
+        # 2b. AUTO-RESOLVE ADDRESS IF MISSING
+        # -------------------------------------------------
+        if not issue.address and issue.latitude and issue.longitude:
+            from .geocode import reverse_geocode
+            resolved_addr = reverse_geocode(issue.latitude, issue.longitude)
+            if resolved_addr:
+                issue.address = resolved_addr
+
+        # -------------------------------------------------
+        # 3. APPLY MULTIMODAL AI RESULTS
+        # -------------------------------------------------
+        if pre_cat and pre_sev:
+            issue.category = pre_cat
+            issue.ai_suggested_category = pre_cat
+            issue.ai_severity = pre_sev
+            if serializer.validated_data.get("ai_severity_reason"):
+                issue.ai_severity_reason = serializer.validated_data["ai_severity_reason"]
+            if serializer.validated_data.get("ai_severity_basis"):
+                issue.ai_severity_basis = serializer.validated_data["ai_severity_basis"]
+            if serializer.validated_data.get("ai_validation_status"):
+                issue.ai_validation_status = serializer.validated_data["ai_validation_status"]
+            if serializer.validated_data.get("ai_is_image_match") is not None:
+                issue.ai_is_image_match = serializer.validated_data["ai_is_image_match"]
+            if serializer.validated_data.get("ai_image_match_reason"):
+                issue.ai_image_match_reason = serializer.validated_data["ai_image_match_reason"]
+            if serializer.validated_data.get("detected_language"):
+                issue.detected_language = serializer.validated_data["detected_language"]
+            if serializer.validated_data.get("translated_description"):
+                issue.translated_description = serializer.validated_data["translated_description"]
+            if serializer.validated_data.get("ai_is_duplicate") is not None:
+                issue.ai_is_duplicate = serializer.validated_data["ai_is_duplicate"]
+            if serializer.validated_data.get("ai_duplicate_of"):
+                issue.ai_duplicate_of = serializer.validated_data["ai_duplicate_of"]
+            if serializer.validated_data.get("ai_duplicate_reason"):
+                issue.ai_duplicate_reason = serializer.validated_data["ai_duplicate_reason"]
+            issue.save()
+        elif ai_result and ai_result.get("ai_success"):
+            issue.category = ai_result["category"]
+            issue.ai_suggested_category = ai_result["category"]
+            issue.ai_severity = ai_result["severity"]
+            issue.ai_severity_reason = ai_result.get("severity_reason") or ""
+            issue.ai_severity_basis = ai_result.get("severity_basis") or "text_only"
+            issue.ai_validation_status = ai_result.get("validation_status") or "valid"
+            issue.ai_is_image_match = ai_result.get("is_image_match")
+            issue.ai_image_match_reason = ai_result.get("image_match_reason") or ""
+            issue.detected_language = ai_result.get("detected_language") or "en"
+            issue.translated_description = ai_result.get("translated_description") or description
+            issue.ai_is_duplicate = ai_result.get("is_duplicate", False)
+            dup_id = ai_result.get("duplicate_of")
+            if issue.ai_is_duplicate and dup_id:
+                try:
+                    issue.ai_duplicate_of = Issue.objects.get(id=dup_id)
+                except Issue.DoesNotExist:
                     issue.ai_duplicate_of = None
-
-                # Duplicate reason (text explanation)
-                duplicate_reason = ai_result.get("duplicate_reason")
-                issue.ai_duplicate_reason = duplicate_reason or ""
+            else:
+                issue.ai_duplicate_of = None
+            issue.ai_duplicate_reason = ai_result.get("duplicate_reason") or ""
+            issue.save()
+        else:
+            issue.ai_suggested_category = ""
+            issue.ai_severity = ""
+            issue.ai_severity_reason = ""
+            issue.ai_severity_basis = "text_only"
+            issue.ai_validation_status = "uncertain"
+            issue.ai_is_image_match = None
+            issue.ai_image_match_reason = ""
+            issue.ai_is_duplicate = None
+            issue.ai_duplicate_of = None
+            issue.ai_duplicate_reason = ""
+            issue.save()
 
         # -------------------------------------------------
-        # 4. SAVE ALL AI RESULTS
+        # 4. GIVE +10 REPUTATION FOR SUBMISSION
         # -------------------------------------------------
-        issue.save()
-
-        # -------------------------------------------------
-        # 5. GIVE +10 REPUTATION FOR SUBMISSION
-        # -------------------------------------------------
-        user = self.request.user
-
+        user = request.user
         already_awarded = ReputationLog.objects.filter(
             user=user,
             related_issue=issue,
@@ -311,6 +357,10 @@ class IssueListCreateView(generics.ListCreateAPIView):
                 reason="submitted",
                 related_issue=issue,
             )
+
+        headers = self.get_success_headers(serializer.data)
+        out_serializer = self.get_serializer(issue)
+        return Response(out_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
 
 class IssueDetailView(generics.RetrieveAPIView):
@@ -741,18 +791,19 @@ class IssueMapView(generics.ListAPIView):
 class ClassifyIssueView(APIView):
     """
     POST:
-        Run AI analysis on a description before submission.
-        Returns: category, severity, detected_language,
-                 translated_description, is_duplicate,
-                 duplicate_of, duplicate_reason.
+        Run AI analysis on a description and optional photo before submission.
+        Returns: category, severity, severity_basis, severity_reason,
+                 validation_status, is_image_match, image_match_reason,
+                 detected_language, translated_description,
+                 is_duplicate, duplicate_of, duplicate_reason.
 
-    Request body:
-        {
-            "description": "...",
-            "nearby_issue_ids": [1, 2, 3]   (optional)
-        }
+    Request body (JSON or multipart/form-data):
+        - description: "..."
+        - photo: file (optional)
+        - nearby_issue_ids: [1, 2, 3] or "1,2,3" (optional)
     """
 
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -764,14 +815,23 @@ class ClassifyIssueView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        nearby_ids = request.data.get("nearby_issue_ids", [])
+        photo = request.FILES.get("photo")
 
-        if not isinstance(nearby_ids, list):
-            nearby_ids = []
+        raw_nearby = request.data.get("nearby_issue_ids", [])
+        if isinstance(raw_nearby, str):
+            try:
+                parsed_json = json.loads(raw_nearby)
+                if isinstance(parsed_json, list):
+                    raw_nearby = parsed_json
+                else:
+                    raw_nearby = [raw_nearby]
+            except Exception:
+                raw_nearby = [x.strip() for x in raw_nearby.split(",") if x.strip()]
+        elif not isinstance(raw_nearby, list):
+            raw_nearby = []
 
-        # Validate IDs are integers
         try:
-            nearby_ids = [int(i) for i in nearby_ids]
+            nearby_ids = [int(i) for i in raw_nearby if str(i).strip()]
         except (TypeError, ValueError):
             nearby_ids = []
 
@@ -779,17 +839,35 @@ class ClassifyIssueView(APIView):
             result = classify_issue(
                 description,
                 nearby_issue_ids=nearby_ids if nearby_ids else None,
+                image_file=photo,
             )
         except Exception as e:
             return Response(
-                {"error": f"AI classification failed: {str(e)}"},
+                {
+                    "error": f"AI classification failed: {str(e)}",
+                    "error_type": "unexpected_error",
+                    "ai_success": False,
+                    "validation_status": "uncertain",
+                    "is_image_match": None,
+                    "severity_basis": "text_only",
+                },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        if result is None:
+        if result is None or not result.get("ai_success"):
+            error_type = (result or {}).get("error_type", "ai_error")
+            error_msg = (result or {}).get("error", "AI service is temporarily unavailable.")
+            status_code = (result or {}).get("status_code") or status.HTTP_503_SERVICE_UNAVAILABLE
             return Response(
-                {"error": "AI service is temporarily unavailable."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                {
+                    "error": error_msg,
+                    "error_type": error_type,
+                    "ai_success": False,
+                    "validation_status": (result or {}).get("validation_status", "uncertain"),
+                    "is_image_match": None,
+                    "severity_basis": (result or {}).get("severity_basis", "text_only"),
+                },
+                status=status_code,
             )
 
         # If duplicate found, get the duplicate issue details
@@ -815,14 +893,61 @@ class ClassifyIssueView(APIView):
 
         return Response(
             {
+                "ai_success": True,
                 "category": result["category"],
                 "severity": result["severity"],
+                "severity_basis": result.get("severity_basis", "text_only"),
+                "severity_reason": result.get("severity_reason", ""),
+                "validation_status": result.get("validation_status", "valid"),
+                "is_image_match": result.get("is_image_match"),
+                "image_match_reason": result.get("image_match_reason", ""),
                 "detected_language": result["detected_language"],
                 "translated_description": result["translated_description"],
                 "is_duplicate": result["is_duplicate"],
                 "duplicate_of": result["duplicate_of"],
                 "duplicate_reason": result["duplicate_reason"],
                 "duplicate_issue": duplicate_issue_data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ReverseGeocodeView(APIView):
+    """
+    GET /api/issues/reverse-geocode/
+    Resolves (latitude, longitude) coordinates into a clean human-readable address.
+    Query parameters:
+        - latitude: float/Decimal
+        - longitude: float/Decimal
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        lat = request.query_params.get("latitude")
+        lng = request.query_params.get("longitude")
+
+        from .geocode import validate_coordinates, reverse_geocode
+
+        valid = validate_coordinates(lat, lng)
+        if not valid:
+            return Response(
+                {
+                    "error": "Invalid or missing coordinates. Latitude must be in [-90, 90], Longitude in [-180, 180].",
+                    "address": "",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        f_lat, f_lng = valid
+        address = reverse_geocode(f_lat, f_lng)
+
+        return Response(
+            {
+                "latitude": f_lat,
+                "longitude": f_lng,
+                "address": address,
+                "status": "success" if address else "unavailable",
             },
             status=status.HTTP_200_OK,
         )

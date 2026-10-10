@@ -27,6 +27,9 @@
                      border-radius:999px; padding:2px 10px; font-size:12px; font-weight:700">
             {{ pending_users|length }} waiting
         </span>
+        <a href="{% url 'authority:registrations' %}" class="btn btn-ghost" style="margin-left:auto; font-size:12px; padding:5px 12px;">
+            Manage All Registrations →
+        </a>
     </div>
 
     <div class="table-wrapper">

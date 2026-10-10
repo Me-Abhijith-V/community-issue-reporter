@@ -95,6 +95,7 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                "apps.authority.context_processors.authority_context",
             ],
         },
     },
@@ -287,3 +288,26 @@ JAZZMIN_SETTINGS = {
 
     "show_ui_builder": False,
 }
+
+# ============================================================
+# MAP & TILE CONFIGURATION (Authority Panel)
+# ============================================================
+MAP_TILE_URL = os.environ.get(
+    "MAP_TILE_URL",
+    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
+)
+MAP_TILE_ATTRIBUTION = os.environ.get(
+    "MAP_TILE_ATTRIBUTION",
+    "Tiles &copy; Esri &mdash; Source: Esri, DeLorme, NAVTEQ, USGS",
+)
+MAP_TILE_TOPO_URL = os.environ.get(
+    "MAP_TILE_TOPO_URL",
+    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
+)
+MAP_TILE_DARK_URL = os.environ.get(
+    "MAP_TILE_DARK_URL",
+    "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+)
+CARTO_API_KEY = os.environ.get("CARTO_API_KEY", "")
+
+

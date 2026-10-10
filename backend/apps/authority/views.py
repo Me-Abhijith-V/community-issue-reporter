@@ -13,6 +13,11 @@ from django.views.decorators.http import require_POST
 
 from apps.issues.models import Issue, StatusUpdate
 from apps.users.models import CustomUser, ReputationLog
+from apps.notifications.services import (
+    create_registration_approval_notification,
+    create_registration_rejection_notification,
+)
+from django.utils import timezone
 
 
 def authority_required(view_func):
@@ -346,15 +351,20 @@ def issue_list(request):
     page_obj = paginator.get_page(request.GET.get("page"))
 
     # ── Per-page reverse geocoding ─────────────────────────────
-    # Build addresses for the current page only (avoids hitting
-    # the geocoder for the entire queryset on every request).
+    # Use stored address if available; otherwise resolve and save
     from .geocode import reverse_geocode_cached
     geo_map = {}  # issue.id -> address string
     for issue in page_obj.object_list:
-        if issue.latitude and issue.longitude:
-            geo_map[issue.id] = reverse_geocode_cached(
+        if issue.address:
+            geo_map[issue.id] = issue.address
+        elif issue.latitude and issue.longitude:
+            addr = reverse_geocode_cached(
                 float(issue.latitude), float(issue.longitude)
             )
+            if addr:
+                geo_map[issue.id] = addr
+                issue.address = addr
+                issue.save(update_fields=["address"])
 
     return render(
         request,
@@ -569,11 +579,27 @@ def issue_detail(request, pk):
 
     # Geocoded address for the detail view
     from .geocode import reverse_geocode_cached
-    geocoded_address = None
-    if issue.latitude and issue.longitude:
+    geocoded_address = issue.address
+    if not geocoded_address and issue.latitude and issue.longitude:
         geocoded_address = reverse_geocode_cached(
             float(issue.latitude), float(issue.longitude)
         )
+        if geocoded_address:
+            issue.address = geocoded_address
+            issue.save(update_fields=["address"])
+
+    from django.conf import settings
+    tile_url = getattr(
+        settings,
+        "MAP_TILE_URL",
+        "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    )
+    tile_attribution = getattr(
+        settings,
+        "MAP_TILE_ATTRIBUTION",
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    )
+    carto_api_key = getattr(settings, "CARTO_API_KEY", "")
 
     return render(
         request,
@@ -582,27 +608,55 @@ def issue_detail(request, pk):
             "issue": issue,
             "history": history,
             "geocoded_address": geocoded_address,
+            "tile_url": tile_url,
+            "tile_attribution": tile_attribution,
+            "carto_api_key": carto_api_key,
         }
     )
 
 
 @authority_required
 def authority_map(request):
+    from django.conf import settings
+    from apps.issues.geocode import validate_coordinates
 
-    issues = Issue.objects.exclude(
-        latitude__isnull=True
-    ).exclude(
-        longitude__isnull=True
-    ).select_related("reported_by")
+    search = request.GET.get("search", "").strip()
+    category = request.GET.get("category", "").strip()
+    status_filter = request.GET.get("status", "").strip()
+    severity = request.GET.get("severity", "").strip()
 
+    queryset = Issue.objects.all().select_related("reported_by")
+
+    if search:
+        queryset = queryset.filter(
+            Q(original_description__icontains=search)
+            | Q(translated_description__icontains=search)
+            | Q(address__icontains=search)
+            | Q(id__icontains=search)
+        )
+    if category:
+        queryset = queryset.filter(category=category)
+    if status_filter:
+        queryset = queryset.filter(status=status_filter)
+    if severity:
+        queryset = queryset.filter(ai_severity=severity)
+
+    total_count = queryset.count()
     data = []
+    unmapped_count = 0
 
-    for issue in issues:
+    for issue in queryset:
+        coords = validate_coordinates(issue.latitude, issue.longitude)
+        if not coords:
+            unmapped_count += 1
+            continue
 
+        lat, lng = coords
         data.append({
             "id": issue.id,
-            "latitude": float(issue.latitude),
-            "longitude": float(issue.longitude),
+            "latitude": lat,
+            "longitude": lng,
+            "address": issue.address or "",
             "category": issue.category,
             "status": issue.status,
             "severity": issue.ai_severity or "",
@@ -611,11 +665,36 @@ def authority_map(request):
             "duplicate_count": issue.duplicate_issues.count(),
         })
 
+    tile_url = getattr(
+        settings,
+        "MAP_TILE_URL",
+        "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    )
+    tile_attribution = getattr(
+        settings,
+        "MAP_TILE_ATTRIBUTION",
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    )
+    carto_api_key = getattr(settings, "CARTO_API_KEY", "")
+
     return render(
         request,
         "authority/map.html",
         {
-            "map_data": json.dumps(data)
+            "map_data": json.dumps(data),
+            "total_count": total_count,
+            "mapped_count": len(data),
+            "unmapped_count": unmapped_count,
+            "search": search,
+            "category": category,
+            "status": status_filter,
+            "severity": severity,
+            "category_choices": Issue.CATEGORY_CHOICES,
+            "status_choices": Issue.STATUS_CHOICES,
+            "severity_choices": Issue.SEVERITY_CHOICES,
+            "tile_url": tile_url,
+            "tile_attribution": tile_attribution,
+            "carto_api_key": carto_api_key,
         }
     )
 
@@ -675,18 +754,160 @@ def user_list(request):
 
 
 @authority_required
+def registration_list(request):
+    """
+    Dedicated Citizen Registrations management page.
+    Filters: status = 'all' | 'pending' | 'approved' | 'rejected'
+    Search: name, email, phone
+    """
+    status_filter = request.GET.get("status", "pending").strip().lower()
+    search = request.GET.get("search", "").strip()
+
+    base_qs = CustomUser.objects.filter(role="citizen").select_related("reviewed_by")
+
+    # Counts for status tabs
+    total_count = base_qs.count()
+    pending_count = base_qs.filter(approval_status="pending").count()
+    approved_count = base_qs.filter(approval_status="approved").count()
+    rejected_count = base_qs.filter(approval_status="rejected").count()
+
+    queryset = base_qs
+    if status_filter in ["pending", "approved", "rejected"]:
+        queryset = queryset.filter(approval_status=status_filter)
+
+    if search:
+        queryset = queryset.filter(
+            Q(full_name__icontains=search)
+            | Q(email__icontains=search)
+            | Q(phone__icontains=search)
+        )
+
+    # Order pending by date_joined (FIFO) so oldest waiting is at top; others newest first
+    if status_filter == "pending":
+        queryset = queryset.order_by("date_joined")
+    else:
+        queryset = queryset.order_by("-date_joined")
+
+    paginator = Paginator(queryset, 20)
+    page_obj = paginator.get_page(request.GET.get("page"))
+
+    return render(
+        request,
+        "authority/registrations.html",
+        {
+            "page_obj": page_obj,
+            "status_filter": status_filter,
+            "search": search,
+            "total_count": total_count,
+            "pending_count": pending_count,
+            "approved_count": approved_count,
+            "rejected_count": rejected_count,
+        },
+    )
+
+
+@authority_required
+def registration_detail(request, pk):
+    """
+    Returns JSON details for citizen registration modal.
+    """
+    user = get_object_or_404(CustomUser, pk=pk, role="citizen")
+    data = {
+        "id": user.id,
+        "full_name": user.full_name,
+        "email": user.email,
+        "phone": user.phone or "—",
+        "preferred_language": user.preferred_language or "en",
+        "approval_status": user.approval_status,
+        "is_active": user.is_active,
+        "date_joined": user.date_joined.strftime("%d %b %Y, %H:%M") if user.date_joined else "—",
+        "reviewed_by": user.reviewed_by.full_name if user.reviewed_by else None,
+        "reviewed_at": user.reviewed_at.strftime("%d %b %Y, %H:%M") if user.reviewed_at else None,
+        "rejection_reason": user.rejection_reason or "",
+        "reputation_score": user.reputation_score,
+        "reputation_level": user.reputation_level,
+        "reports_count": user.reported_issues.count(),
+    }
+    return JsonResponse(data)
+
+
+@authority_required
+@require_POST
+def approve_registration(request, pk):
+    """Approve a citizen registration from the dedicated registrations page."""
+    user = get_object_or_404(CustomUser, pk=pk, role="citizen")
+    next_url = request.POST.get("next") or request.GET.get("next")
+
+    if user.approval_status == "approved" and user.is_active:
+        messages.info(request, f"{user.full_name} is already approved.")
+    else:
+        user.approval_status = "approved"
+        user.is_active = True
+        user.reviewed_by = request.user
+        user.reviewed_at = timezone.now()
+        user.save(update_fields=["approval_status", "is_active", "reviewed_by", "reviewed_at"])
+
+        # Notify citizen
+        create_registration_approval_notification(user)
+
+        messages.success(
+            request,
+            f"✓ {user.full_name} has been approved and can now log in."
+        )
+
+    if next_url:
+        return redirect(next_url)
+    return redirect("authority:registrations")
+
+
+@authority_required
+@require_POST
+def reject_registration(request, pk):
+    """Reject a citizen registration with optional reason."""
+    user = get_object_or_404(CustomUser, pk=pk, role="citizen")
+    rejection_reason = request.POST.get("rejection_reason", "").strip()
+    next_url = request.POST.get("next") or request.GET.get("next")
+
+    if user.approval_status == "rejected" and not user.is_active and not rejection_reason:
+        messages.info(request, f"{user.full_name}'s registration is already rejected.")
+    else:
+        user.approval_status = "rejected"
+        user.is_active = False
+        if rejection_reason:
+            user.rejection_reason = rejection_reason
+        user.reviewed_by = request.user
+        user.reviewed_at = timezone.now()
+        user.save(update_fields=["approval_status", "is_active", "rejection_reason", "reviewed_by", "reviewed_at"])
+
+        # Notify citizen
+        create_registration_rejection_notification(user, reason=user.rejection_reason)
+
+        messages.success(
+            request,
+            f"✗ {user.full_name}'s registration has been rejected."
+        )
+
+    if next_url:
+        return redirect(next_url)
+    return redirect("authority:registrations")
+
+
+@authority_required
 @require_POST
 def approve_user(request, pk):
     """Approve a pending citizen registration."""
     user = get_object_or_404(
         CustomUser, pk=pk, role="citizen"
     )
-    if user.approval_status != "pending":
-        messages.warning(request, "User is not pending approval.")
+    if user.approval_status == "approved" and user.is_active:
+        messages.info(request, f"{user.full_name} is already approved.")
     else:
         user.approval_status = "approved"
         user.is_active = True
-        user.save(update_fields=["approval_status", "is_active"])
+        user.reviewed_by = request.user
+        user.reviewed_at = timezone.now()
+        user.save(update_fields=["approval_status", "is_active", "reviewed_by", "reviewed_at"])
+        create_registration_approval_notification(user)
         messages.success(
             request,
             f"{user.full_name} has been approved and can now log in."
@@ -701,12 +922,18 @@ def reject_user(request, pk):
     user = get_object_or_404(
         CustomUser, pk=pk, role="citizen"
     )
-    if user.approval_status == "rejected":
-        messages.warning(request, "Already rejected.")
+    rejection_reason = request.POST.get("rejection_reason", "").strip()
+    if user.approval_status == "rejected" and not user.is_active and not rejection_reason:
+        messages.info(request, "Already rejected.")
     else:
         user.approval_status = "rejected"
         user.is_active = False
-        user.save(update_fields=["approval_status", "is_active"])
+        if rejection_reason:
+            user.rejection_reason = rejection_reason
+        user.reviewed_by = request.user
+        user.reviewed_at = timezone.now()
+        user.save(update_fields=["approval_status", "is_active", "rejection_reason", "reviewed_by", "reviewed_at"])
+        create_registration_rejection_notification(user, reason=user.rejection_reason)
         messages.success(
             request,
             f"{user.full_name}'s registration has been rejected."

@@ -70,10 +70,13 @@ class UserSerializer(serializers.ModelSerializer):
             'phone',
             'role',
             'approval_status',
+            'reviewed_at',
+            'rejection_reason',
             'fcm_token',
             'reputation_score',
             'reputation_level',
             'preferred_language',
+            'date_joined',
         ]
 
         read_only_fields = [
@@ -81,9 +84,55 @@ class UserSerializer(serializers.ModelSerializer):
             'email',
             'role',
             'approval_status',
+            'reviewed_at',
+            'rejection_reason',
             'reputation_score',
             'reputation_level',
+            'date_joined',
         ]
+
+
+class CitizenRegistrationSerializer(serializers.ModelSerializer):
+    """
+    Serializer used by authority panel to list and review citizen registrations.
+    """
+    reviewed_by_name = serializers.SerializerMethodField()
+    reviewed_by_email = serializers.SerializerMethodField()
+    reports_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CustomUser
+        fields = [
+            'id',
+            'full_name',
+            'email',
+            'phone',
+            'role',
+            'preferred_language',
+            'approval_status',
+            'is_active',
+            'date_joined',
+            'reviewed_by',
+            'reviewed_by_name',
+            'reviewed_by_email',
+            'reviewed_at',
+            'rejection_reason',
+            'reputation_score',
+            'reputation_level',
+            'reports_count',
+        ]
+        read_only_fields = fields
+
+    def get_reviewed_by_name(self, obj):
+        return obj.reviewed_by.full_name if obj.reviewed_by else None
+
+    def get_reviewed_by_email(self, obj):
+        return obj.reviewed_by.email if obj.reviewed_by else None
+
+    def get_reports_count(self, obj):
+        if hasattr(obj, 'reported_issues_count'):
+            return obj.reported_issues_count
+        return obj.reported_issues.count()
 
 
 class FCMTokenSerializer(serializers.ModelSerializer):

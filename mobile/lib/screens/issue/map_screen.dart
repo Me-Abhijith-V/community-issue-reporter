@@ -182,6 +182,9 @@ class _MapScreenState extends State<MapScreen> {
 
       final color = _markerHue(status);
 
+      final address = issue['address']?.toString().trim();
+      final hasAddress = address != null && address.isNotEmpty;
+
       markers.add(
         Marker(
           markerId: MarkerId(issueId),
@@ -192,9 +195,9 @@ class _MapScreenState extends State<MapScreen> {
           ),
           infoWindow: InfoWindow(
             title: _categoryLabel(category),
-            snippet:
-            '${_statusLabel(status)}'
-                ' • ${_upvotesLabel(upvotes)}',
+            snippet: hasAddress
+                ? '$address • ${_statusLabel(status)}'
+                : '${_statusLabel(status)} • ${_upvotesLabel(upvotes)}',
           ),
           onTap: () {
             _openIssue(issue);

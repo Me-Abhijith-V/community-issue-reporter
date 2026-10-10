@@ -436,6 +436,14 @@
             <a href="{% url 'authority:map' %}" class="nav-item {% if request.resolver_match.url_name == 'map' %}active{% endif %}">
                 🗺️ Map View
             </a>
+            <a href="{% url 'authority:registrations' %}" class="nav-item {% if 'registration' in request.resolver_match.url_name %}active{% endif %}">
+                📝 Registrations
+                {% if pending_registrations_count > 0 %}
+                <span style="margin-left:auto; background:#fbbf24; color:#1e293b; font-size:11px; font-weight:700; border-radius:999px; padding:1px 7px; line-height:1.4;">
+                    {{ pending_registrations_count }}
+                </span>
+                {% endif %}
+            </a>
             <a href="{% url 'authority:users' %}" class="nav-item {% if request.resolver_match.url_name == 'users' %}active{% endif %}">
                 👥 Citizens
             </a>
@@ -472,6 +480,7 @@
             document.documentElement.classList.toggle('light-init', !isDark);
             const btn = document.getElementById('theme-toggle');
             if (btn) btn.textContent = isDark ? '🌙 Dark Mode' : '☀️ Light Mode';
+            window.dispatchEvent(new CustomEvent('themechange', { detail: { isDark: isDark } }));
         }
 
         function toggleTheme() {

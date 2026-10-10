@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../models/status_update_model.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/issue_service.dart';
+import '../../services/location_service.dart';
 import '../../widgets/status_timeline.dart';
 
 class IssueDetailScreen extends StatefulWidget {
@@ -22,6 +23,7 @@ class IssueDetailScreen extends StatefulWidget {
 class _IssueDetailScreenState
     extends State<IssueDetailScreen> {
   late final IssueService _issueService;
+  final LocationService _locationService = LocationService();
 
   late Future<List<StatusUpdateModel>>
   _statusHistoryFuture;
@@ -30,6 +32,8 @@ class _IssueDetailScreenState
 
   bool _isLoadingIssue = true;
   String? _issueLoadError;
+  String? _resolvedAddress;
+  bool _isResolvingAddress = false;
 
   @override
   void initState() {
@@ -44,6 +48,13 @@ class _IssueDetailScreenState
     _issue = Map<String, dynamic>.from(
       widget.issue,
     );
+
+    final initialAddr = widget.issue['address']?.toString().trim();
+    if (initialAddr != null && initialAddr.isNotEmpty) {
+      _resolvedAddress = initialAddr;
+    } else {
+      _resolveLocation();
+    }
 
     final issueId = int.tryParse(
       widget.issue['id'].toString(),
@@ -87,6 +98,8 @@ class _IssueDetailScreenState
         _isLoadingIssue = false;
         _issueLoadError = null;
       });
+
+      _resolveLocation();
     } catch (e) {
       if (!mounted) return;
 
@@ -98,6 +111,47 @@ class _IssueDetailScreenState
           'Exception: ',
           '',
         );
+      });
+    }
+  }
+
+  Future<void> _resolveLocation() async {
+    final rawAddr = _issue['address']?.toString().trim();
+    if (rawAddr != null && rawAddr.isNotEmpty) {
+      if (mounted) {
+        setState(() {
+          _resolvedAddress = rawAddr;
+          _isResolvingAddress = false;
+        });
+      }
+      return;
+    }
+
+    final lat = double.tryParse(_issue['latitude']?.toString() ?? '');
+    final lng = double.tryParse(_issue['longitude']?.toString() ?? '');
+    if (lat == null || lng == null) return;
+
+    if (mounted) {
+      setState(() {
+        _isResolvingAddress = true;
+      });
+    }
+
+    try {
+      final addr = await _locationService.reverseGeocode(
+        latitude: lat,
+        longitude: lng,
+        issueService: _issueService,
+      );
+      if (!mounted) return;
+      setState(() {
+        _resolvedAddress = addr;
+        _isResolvingAddress = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isResolvingAddress = false;
       });
     }
   }
@@ -149,15 +203,23 @@ class _IssueDetailScreenState
   // ============================================================
 
   String _locationText() {
+    final addr = _resolvedAddress ?? _issue['address']?.toString().trim();
+    if (addr != null && addr.isNotEmpty) {
+      return addr;
+    }
+
     final latitude = _issue['latitude'];
     final longitude = _issue['longitude'];
 
-    if (latitude == null ||
-        longitude == null) {
+    if (latitude == null || longitude == null) {
       return 'Location unavailable';
     }
 
-    return '$latitude, $longitude';
+    if (_isResolvingAddress) {
+      return 'Resolving address...';
+    }
+
+    return 'Address unavailable';
   }
 
   // ============================================================
@@ -418,28 +480,49 @@ class _IssueDetailScreenState
 
                 _DetailCard(
                   title: 'Location',
-                  child: Row(
-                    crossAxisAlignment:
-                    CrossAxisAlignment.start,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(
-                        Icons.location_on,
-                        size: 20,
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            _resolvedAddress != null ||
+                                    (_issue['address'] != null &&
+                                        _issue['address'].toString().isNotEmpty)
+                                ? Icons.location_on
+                                : Icons.location_on_outlined,
+                            size: 20,
+                            color: Colors.blue.shade700,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _locationText(),
+                              style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          if (_isResolvingAddress)
+                            const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                        ],
                       ),
-
-                      const SizedBox(
-                        width: 8,
-                      ),
-
-                      Expanded(
-                        child: Text(
-                          _locationText(),
-                          style:
-                          const TextStyle(
-                            fontSize: 15,
+                      if (_issue['latitude'] != null && _issue['longitude'] != null) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          'GPS: ${_issue['latitude']}, ${_issue['longitude']}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade600,
                           ),
                         ),
-                      ),
+                      ],
                     ],
                   ),
                 ),
